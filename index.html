@@ -35,7 +35,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 #groups label:last-child{border-bottom:0}
 .tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .tools button{margin-top:8px;padding:5px 10px;font-size:.85rem}
-#log{background:var(--code);color:var(--code-ink);font:13px/1.5 ui-monospace,Consolas,monospace;padding:12px;border-radius:6px;height:200px;overflow:auto;white-space:pre-wrap;margin-top:14px}
+#log{margin-top:0;background:var(--code);color:var(--code-ink);font:13px/1.5 ui-monospace,Consolas,monospace;padding:12px;border-radius:6px;height:200px;overflow:auto;white-space:pre-wrap;margin-top:14px}
 #status{margin-top:10px;color:var(--mute);font-size:.9rem;min-height:1.4em}
 </style>
 </head>
@@ -88,12 +88,28 @@ button:disabled{opacity:.5;cursor:not-allowed}
   <button id="run">Выгрузить в Excel</button>
   <button id="stop" class="ghost" hidden>Остановить и сохранить</button>
   <div id="status"></div>
-  <div id="log" aria-live="polite"></div>
 </section>
+<div id="log" aria-live="polite">Журнал: здесь появятся сообщения и ошибки.
+</div>
 </main>
 
 <script>
-const GRAMJS_URL = 'https://esm.sh/telegram@2.26.16?bundle';
+const GRAMJS_URLS = [
+  'https://esm.sh/telegram@2.26.16?bundle',
+  'https://esm.sh/telegram@2.26.16',
+  'https://cdn.jsdelivr.net/npm/telegram@2.26.16/+esm',
+  'https://cdn.skypack.dev/telegram@2.26.16'
+];
+async function loadGramJS() {
+  let last;
+  for (const u of GRAMJS_URLS) {
+    try { log('Загрузка GramJS: ' + u); const m = await import(u); if (m.TelegramClient) return m; last = new Error('в модуле нет TelegramClient'); }
+    catch (e) { last = e; log('  не удалось: ' + (e.message || e)); }
+  }
+  throw last || new Error('GramJS не загрузился');
+}
+window.addEventListener('error', e => log('Ошибка скрипта: ' + e.message));
+window.addEventListener('unhandledrejection', e => log('Ошибка: ' + ((e.reason && e.reason.message) || e.reason)));
 const TZ = 5 * 3600; // Ташкент, UTC+5
 const $ = s => document.querySelector(s);
 const log = t => { const l = $('#log'); l.textContent += t + '\n'; l.scrollTop = l.scrollHeight; };
@@ -128,8 +144,8 @@ $('#connect').onclick = async () => {
   if (!apiId || !apiHash) { alert('Введите API ID и API Hash'); return; }
   $('#connect').disabled = true;
   try {
-    log('Загрузка GramJS…');
-    const lib = await import(GRAMJS_URL);
+    $('#connect').textContent = 'Подключение…';
+    const lib = await loadGramJS();
     const { TelegramClient, sessions } = lib;
     const session = new sessions.StringSession(lsGet('tg_session'));
     client = new TelegramClient(session, apiId, apiHash, { connectionRetries: 5, floodSleepThreshold: 120 });
@@ -149,7 +165,7 @@ $('#connect').onclick = async () => {
     await loadGroups();
   } catch (e) {
     log('Не удалось подключиться: ' + (e.message || e));
-    $('#connect').disabled = false;
+    $('#connect').disabled = false; $('#connect').textContent = 'Войти';
   }
 };
 
