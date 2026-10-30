@@ -6,8 +6,8 @@
 <title>Выгрузка диалогов поддержки из Telegram</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
-<!-- Подключаем локальную сборку (название изменено на gramjs.js) -->
-<script src="./gramjs.js"></script>
+<!-- Подключаем локальную сборку -->
+<script src="./telegram.js"></script>
 <style>
 :root{--bg:#eef2f5;--panel:#fff;--ink:#16222b;--mute:#5d6e7a;--line:#cfd9e0;--accent:#1f6f8b;--accent-ink:#fff;--warn:#9a3b1f;--code:#0f1a21;--code-ink:#cfe3ee}
 @media (prefers-color-scheme:dark){:root{--bg:#0f171d;--panel:#17222a;--ink:#e4edf2;--mute:#8fa3b0;--line:#2b3b46;--accent:#5bb4d1;--accent-ink:#0b1318;--warn:#e59a7d;--code:#0a1116;--code-ink:#b9d3e0}}
@@ -44,7 +44,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 <body>
 <main>
 <h1>Выгрузка диалогов поддержки из Telegram</h1>
-<p class="lead">Страница входит в ваш аккаунт через GramJS, собирает сообщения из выбранных групп за период и сохраняет Excel с четырьмя листами: «Нагрузка по сотрудникам», «Нагрузка по типам», «Детальный лог» и «Сводка по дням». Расчётные листы построены на формулах. Всё работает в вашем браузере, данные никуда не отправляются.</p>
+<p class="lead">Страница входит в ваш аккаунт через GramJS, собирает сообщения из выбранных групп за период и сохраняет Excel с четырьмя листами. Расчётные листы построены на формулах.</p>
 
 <section id="s1">
   <h2><b>1</b> Вход в Telegram</h2>
@@ -71,7 +71,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
   </div>
   <label for="empFile">Файл сотрудников (CSV или Excel)</label>
   <input id="empFile" type="file" accept=".csv,.xlsx,.xls">
-  <p class="hint">Нужны колонки «ID Пользователя» и «Имя». Без файла все будут помечены как «Клиент». Время считается по Ташкенту (UTC+5).</p>
+  <p class="hint">Нужны колонки с ID и Именем. Скрипт ищет колонки: «ID Пользователя», «ID», «User ID» и «Имя», «ФИО», «Name».</p>
   <p id="empInfo" class="hint"></p>
   <label for="exclIds">Исключить отправителей (ID через запятую, например рассылки)</label>
   <input id="exclIds" type="text" placeholder="6640038802, 123456789" autocomplete="off">
@@ -106,32 +106,17 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
 const lsDel = k => { try { localStorage.removeItem(k); } catch (e) {} };
 
 let client = null, employees = {}, empOrder = [], groups = [], stopFlag = false;
-let askResolve = null; // Храним функцию разрешения промиса для ask
 
-// ---------- вспомогательное окно ввода (телефон, код, пароль) ----------
+// ---------- вспомогательное окно ввода ----------
 function ask(label, secret) {
   return new Promise(resolve => {
-    askResolve = resolve;
     $('#ask').hidden = false;
     $('#askLabel').textContent = label;
     const inp = $('#askInput');
     inp.type = secret ? 'password' : 'text';
     inp.value = '';
     inp.focus();
-    
-    const cleanup = () => {
-        $('#ask').hidden = true;
-        $('#askOk').onclick = null;
-        inp.onkeydown = null;
-        askResolve = null;
-    };
-    
-    const done = () => {
-        const val = inp.value.trim();
-        cleanup();
-        resolve(val);
-    };
-    
+    const done = () => { $('#ask').hidden = true; $('#askOk').onclick = null; inp.onkeydown = null; resolve(inp.value.trim()); };
     $('#askOk').onclick = done;
     inp.onkeydown = e => { if (e.key === 'Enter') done(); };
   });
@@ -149,24 +134,18 @@ $('#connect').onclick = async () => {
   try {
     $('#connect').textContent = 'Подключение…';
     
-    // Проверяем и window.telegram, и window.GramJS на случай разных сборок
-    const lib = window.telegram || window.GramJS;
-    if (!lib) {
-        throw new Error('Библиотека gramjs.js не загружена. Проверьте, что файл лежит рядом с index.html.');
+    if (!window.telegram) {
+        throw new Error('Библиотека telegram.js не загружена. Убедитесь, что файл лежит рядом с index.html.');
     }
-    const { TelegramClient, sessions } = lib;
+    const { TelegramClient, sessions } = window.telegram;
     
     const session = new sessions.StringSession(lsGet('tg_session'));
     
-    // --- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Принудительно указываем DC2 ---
-    // Это предотвращает ошибку "Auth key unset" после миграции.
-    // Используем веб-эндпоинт для DC2.
+    // Принудительно указываем DC2 для предотвращения ошибки Auth key unset
     session.setDC(2, 'venus.web.telegram.org', 443);
-    // --------------------------------------------------------
 
     client = new TelegramClient(session, apiId, apiHash, { connectionRetries: 5, floodSleepThreshold: 120 });
     
-    // --- Безопасная обработка ввода кода ---
     let phoneCodeCallbackUsed = false;
     await client.start({
       phoneNumber: () => ask('Номер телефона в формате +998901234567'),
@@ -180,11 +159,9 @@ $('#connect').onclick = async () => {
       password: () => ask('Пароль двухэтапной проверки', true),
       onError: e => { 
           log('Ошибка входа: ' + (e.message || e)); 
-          // Возвращаем false, чтобы остановить циклические попытки
           return false; 
       }
     });
-    // -----------------------------------------
 
     if ($('#remember').checked) {
       lsSet('tg_api_id', apiId); lsSet('tg_api_hash', apiHash); lsSet('tg_session', client.session.save());
@@ -205,7 +182,7 @@ const iso = d => d.toISOString().slice(0, 10);
 $('#dTo').value = iso(new Date());
 $('#dFrom').value = iso(new Date(Date.now() - 14 * 864e5));
 
-// ---------- сотрудники ----------
+// ---------- сотрудники (УЛУЧШЕННЫЙ ПАРСИНГ) ----------
 $('#empFile').onchange = async e => {
   employees = {}; empOrder = [];
   const f = e.target.files[0];
@@ -213,13 +190,52 @@ $('#empFile').onchange = async e => {
   try {
     const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: false });
-    for (const r of rows) {
-      const id = String(r['ID Пользователя'] ?? '').trim();
-      if (id) { if (!(id in employees)) empOrder.push(id); employees[id] = String(r['Имя'] ?? '').trim(); }
+    
+    if (rows.length === 0) {
+       $('#empInfo').textContent = 'Файл пуст.';
+       return;
     }
+
+    // Автоматически ищем нужные колонки
+    const sampleRow = rows[0];
+    const keys = Object.keys(sampleRow);
+    
+    // Ищем ID (ID Пользователя, ID, id, User ID, ИД)
+    const idKey = keys.find(k => {
+        const lower = k.toLowerCase().replace(/\s+/g, '');
+        return lower === 'id' || lower === 'idпользователя' || lower === 'userid' || lower === 'ид' || lower.includes('id');
+    });
+    
+    // Ищем Имя (Имя, ФИО, Name)
+    const nameKey = keys.find(k => {
+        const lower = k.toLowerCase();
+        return lower.includes('имя') || lower.includes('name') || lower.includes('фио');
+    });
+
+    if (!idKey) {
+        throw new Error('Не найдена колонка с ID. Убедитесь, что есть колонка "ID Пользователя" или "ID".');
+    }
+
+    for (const r of rows) {
+      // Извлекаем ID и очищаем от лишних символов (пробелов, точек, кавычек)
+      let rawId = String(r[idKey] ?? '').trim();
+      // Заменяем всё, что не цифры или минус
+      let id = rawId.replace(/[^0-9-]/g, '');
+      
+      if (id) {
+        if (!(id in employees)) empOrder.push(id);
+        // Если колонка с именем не найдена, ставим заглушку
+        employees[id] = nameKey ? String(r[nameKey]).trim() : 'Сотрудник';
+      }
+    }
+    
     const n = Object.keys(employees).length;
-    $('#empInfo').textContent = n ? 'Загружено сотрудников: ' + n : 'Колонка «ID Пользователя» не найдена или пуста.';
-  } catch (err) { $('#empInfo').textContent = 'Не удалось прочитать файл: ' + err.message; }
+    $('#empInfo').textContent = n ? 'Загружено сотрудников: ' + n : 'Колонка с ID найдена, но она пуста.';
+    log('Файл сотрудников загружен. Найдено записей: ' + n + ' (Колонка ID: "' + idKey + '")');
+  } catch (err) { 
+      $('#empInfo').textContent = 'Ошибка чтения: ' + err.message; 
+      log('Ошибка чтения файла сотрудников: ' + err.message);
+  }
 };
 
 // ---------- список групп ----------
@@ -288,14 +304,23 @@ $('#run').onclick = async () => {
         if (m.date > toTs) continue;
         if (skipService && m.action) continue;
 
-        const senderId = m.senderId != null ? String(m.senderId) : 'Unknown';
+        // Надежное извлечение ID отправителя
+        let senderId = 'Unknown';
+        if (m.senderId) {
+            senderId = String(m.senderId);
+        } else if (m.sender && m.sender.id) {
+            senderId = String(m.sender.id);
+        }
+        
         if (excluded.has(senderId)) continue;
         let role, name;
-        if (senderId in employees) { role = 'Сотрудник'; name = employees[senderId]; }
-        else {
-          role = 'Клиент'; name = 'Неизвестно';
-          const s = m.sender;
-          if (s) { if (s.firstName) name = s.firstName + (s.lastName ? ' ' + s.lastName : ''); else if (s.title) name = s.title; }
+        if (senderId in employees) { 
+            role = 'Сотрудник'; 
+            name = employees[senderId]; 
+        } else {
+            role = 'Клиент'; name = 'Неизвестно';
+            const s = m.sender;
+            if (s) { if (s.firstName) name = s.firstName + (s.lastName ? ' ' + s.lastName : ''); else if (s.title) name = s.title; }
         }
         const t = new Date((m.date + TZ) * 1000).toISOString();
         rows.push({
@@ -442,7 +467,6 @@ async function saveWorkbook(rows, dFrom, dTo) {
   Object.keys(cnt).sort().forEach((k, i) => {
     const [d, ro, ty] = k.split('|'), r = i + 2;
     wsd.getCell(r, 1).value = d; wsd.getCell(r, 2).value = ro; wsd.getCell(r, 3).value = ty;
-    // Исправленная формула
     wsd.getCell(r, 4).value = { formula: `COUNTIFS(${LOG}!$A:$A, A${r}, ${LOG}!$G:$G, B${r}, ${LOG}!$H:$H, C${r})`, result: cnt[k] };
   });
   wsd.getColumn(1).width = 10.3; wsd.getColumn(2).width = 10.4; wsd.getColumn(3).width = 14.7;
