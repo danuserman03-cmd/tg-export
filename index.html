@@ -6,8 +6,8 @@
 <title>Выгрузка диалогов поддержки из Telegram</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
-<!-- Подключаем локальную браузерную сборку GramJS -->
-<script src="./telegram.js"></script>
+<!-- Подключаем локальную сборку (название изменено на gramjs.js) -->
+<script src="./gramjs.js"></script>
 <style>
 :root{--bg:#eef2f5;--panel:#fff;--ink:#16222b;--mute:#5d6e7a;--line:#cfd9e0;--accent:#1f6f8b;--accent-ink:#fff;--warn:#9a3b1f;--code:#0f1a21;--code-ink:#cfe3ee}
 @media (prefers-color-scheme:dark){:root{--bg:#0f171d;--panel:#17222a;--ink:#e4edf2;--mute:#8fa3b0;--line:#2b3b46;--accent:#5bb4d1;--accent-ink:#0b1318;--warn:#e59a7d;--code:#0a1116;--code-ink:#b9d3e0}}
@@ -134,11 +134,12 @@ $('#connect').onclick = async () => {
   try {
     $('#connect').textContent = 'Подключение…';
     
-    // ИСПОЛЬЗУЕМ ЛОКАЛЬНУЮ СБОРКУ
-    if (!window.telegram) {
-        throw new Error('Библиотека telegram.js не загружена. Убедитесь, что файл лежит рядом с index.html.');
+    // Проверяем и window.telegram, и window.GramJS на случай разных сборок
+    const lib = window.telegram || window.GramJS;
+    if (!lib) {
+        throw new Error('Библиотека gramjs.js не загружена. Проверьте, что файл лежит рядом с index.html.');
     }
-    const { TelegramClient, sessions } = window.telegram;
+    const { TelegramClient, sessions } = lib;
     
     const session = new sessions.StringSession(lsGet('tg_session'));
     client = new TelegramClient(session, apiId, apiHash, { connectionRetries: 5, floodSleepThreshold: 120 });
@@ -212,7 +213,6 @@ $('#gAll').onclick = () => { const q = $('#gFilter').value.toLowerCase(); groups
 $('#gNone').onclick = () => { const q = $('#gFilter').value.toLowerCase(); groups.forEach(g => { if (!q || g.title.toLowerCase().includes(q)) g.on = false; }); renderGroups(); };
 
 // ---------- выгрузка ----------
-// Как в образце: четыре типа. Голосовые, аудио и стикеры в Telegram — это документы, поэтому попадают в «Документ».
 function msgType(m) {
   if (m.photo) return 'Фото';
   if (m.document) return 'Документ';
@@ -305,7 +305,6 @@ async function saveWorkbook(rows, dFrom, dTo) {
   const put = (ws, r, c, v, nf, fmt) => { const cell = ws.getCell(r, c); cell.value = v; if (nf) cell.numFmt = nf; if (fmt) fmt(cell); return cell; };
   const body = c => { c.border = BORDER; };
 
-  // агрегаты по сотрудникам
   const days = [];
   for (let t = Date.parse(dFrom + 'T00:00:00Z'); t <= Date.parse(dTo + 'T00:00:00Z'); t += 864e5) days.push(new Date(t).toISOString().slice(0, 10));
   const TYPES = ['Текст', 'Фото', 'Документ', 'Другое'];
@@ -320,7 +319,6 @@ async function saveWorkbook(rows, dFrom, dTo) {
   const emps = empOrder.filter(id => agg[id]);
 
   if (emps.length) {
-    // ---- лист 1: нагрузка по сотрудникам ----
     const ws = wb.addWorksheet('Нагрузка по сотрудникам', { views: [{ state: 'frozen', xSplit: 2, ySplit: 3 }] });
     const D = days.length, cT = 3 + D, cAvg = cT + 1, cAvgAct = cT + 2, cAct = cT + 3, cGr = cT + 4, cSh = cT + 5;
     const first = 4, last = 3 + emps.length, tot = last + 1;
@@ -329,7 +327,7 @@ async function saveWorkbook(rows, dFrom, dTo) {
     const heads = ['ID сотрудника', 'Сотрудник', ...days, 'Всего', 'Среднее в день (' + D + ' дн.)', 'Среднее в активный день', 'Активных дней', 'Групп', 'Доля, %'];
     heads.forEach((h, i) => put(ws, 3, i + 1, h, null, HEAD));
 
-    const m = []; // значения для кэша формул
+    const m = [];
     const total = emps.reduce((s, id) => s + sumA(days.map(d => agg[id].day[d] || 0)), 0);
     emps.forEach((id, i) => {
       const r = first + i, a = agg[id], perDay = days.map(d => a.day[d] || 0), sum = sumA(perDay), act = perDay.filter(x => x > 0).length;
@@ -345,7 +343,6 @@ async function saveWorkbook(rows, dFrom, dTo) {
       put(ws, r, cGr, v.gr, '0', body);
       put(ws, r, cSh, { formula: `${colL(cT)}${r}/${colL(cT)}$${tot}`, result: v.share }, '0.0%', body);
     });
-    // колонки с числами для итоговых строк: дни, Всего, Среднее в день, Среднее в активный день, Активных дней
     const colVals = c => m.map(v => c <= 2 + D ? v.perDay[c - 3] : c === cT ? v.sum : c === cAvg ? v.avg : c === cAvgAct ? v.avgAct : v.act);
     const rng = c => `${colL(c)}${first}:${colL(c)}${last}`;
     const rowsDef = [
@@ -363,12 +360,10 @@ async function saveWorkbook(rows, dFrom, dTo) {
     }
     for (let c = 3; c <= cAct; c++) put(ws, tot + 1, c, { formula: `AVERAGE(${rng(c)})`, result: avgA(colVals(c)) }, '0.0');
     put(ws, tot, cSh, { formula: `SUM(${rng(cSh)})`, result: total ? 1 : 0 }, '0.0%');
-    // Для строки «основные» формула без IFERROR, как в образце, если есть подходящие сотрудники
     put(ws, tot + 5, 1, 'Примечания: данные — только сообщения с ролью «Сотрудник» из листа «Детальный лог»; исключения (служебные сообщения, указанные ID отправителей) применены при выгрузке. Числа в таблице — формулы, пересчитываются при изменении лога. Колонка «Групп» — число групп, где сотрудник писал за период.');
     ws.getColumn(1).width = 14; ws.getColumn(2).width = 44;
     for (let c = 3; c <= cSh; c++) ws.getColumn(c).width = 13;
 
-    // ---- лист 2: нагрузка по типам ----
     const wt = wb.addWorksheet('Нагрузка по типам', { views: [{ state: 'frozen', xSplit: 2, ySplit: 3 }] });
     put(wt, 1, 1, 'Сообщения сотрудников по типам', null, c => { c.font = { name: 'Cambria', size: 13, bold: true }; });
     wt.getRow(1).height = 16.8; wt.getRow(3).height = 27.6;
@@ -396,7 +391,6 @@ async function saveWorkbook(rows, dFrom, dTo) {
     log('Файл сотрудников не загружен или в выгрузке нет сообщений сотрудников: листы нагрузки пропущены.');
   }
 
-  // ---- лист 3: детальный лог ----
   const wl = wb.addWorksheet('Детальный лог');
   const logHead = ['Дата', 'Время', 'ID группы', 'Название группы', 'ID отправителя', 'Имя отправителя', 'Роль', 'Тип сообщения', 'Текст сообщения'];
   wl.addRow(logHead);
@@ -404,7 +398,6 @@ async function saveWorkbook(rows, dFrom, dTo) {
   wl.autoFilter = { from: 'A1', to: 'I' + N };
   wl.getColumn(4).width = 20; wl.getColumn(6).width = 14.6; wl.getColumn(9).width = 28.2;
 
-  // ---- лист 4: сводка по дням ----
   const wsd = wb.addWorksheet('Сводка по дням');
   ['Дата', 'Роль', 'Тип сообщения', 'Количество'].forEach((h, i) => wsd.getCell(1, i + 1).value = h);
   const cnt = {};
@@ -412,7 +405,7 @@ async function saveWorkbook(rows, dFrom, dTo) {
   Object.keys(cnt).sort().forEach((k, i) => {
     const [d, ro, ty] = k.split('|'), r = i + 2;
     wsd.getCell(r, 1).value = d; wsd.getCell(r, 2).value = ro; wsd.getCell(r, 3).value = ty;
-    wsd.getCell(r, 4).value = { formula: `COUNTIFS(${LOG}!$A:$A, A${r}, ${LOG}!$G:$G, B${r}, ${LOG}!$H:$H, C${r})`, result: cnt[k] };
+    wsd.getCell(r, 4).value = { formula: `COUNTIFS(${LOG}!$A:$A, A${r}, ${LOG}!$G:$G, B${r}, ${LOG}$H:$H, C${r})`.replace('$H:$H', '!$H:$H'), result: cnt[k] };
   });
   wsd.getColumn(1).width = 10.3; wsd.getColumn(2).width = 10.4; wsd.getColumn(3).width = 14.7;
 
