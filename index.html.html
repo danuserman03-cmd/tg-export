@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Выгрузка диалогов поддержки из Telegram</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<style>
+:root{--bg:#eef2f5;--panel:#fff;--ink:#16222b;--mute:#5d6e7a;--line:#cfd9e0;--accent:#1f6f8b;--accent-ink:#fff;--warn:#9a3b1f;--code:#0f1a21;--code-ink:#cfe3ee}
+@media (prefers-color-scheme:dark){:root{--bg:#0f171d;--panel:#17222a;--ink:#e4edf2;--mute:#8fa3b0;--line:#2b3b46;--accent:#5bb4d1;--accent-ink:#0b1318;--warn:#e59a7d;--code:#0a1116;--code-ink:#b9d3e0}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+main{max-width:760px;margin:0 auto;padding:32px 16px 64px}
+h1{font-size:1.6rem;line-height:1.2;margin:0 0 6px}
+.lead{color:var(--mute);margin:0 0 28px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px;margin-bottom:16px}
+section[hidden]{display:none}
+h2{font-size:1.05rem;margin:0 0 14px;display:flex;gap:10px;align-items:baseline}
+h2 b{color:var(--accent)}
+label{display:block;font-size:.9rem;color:var(--mute);margin:12px 0 4px}
+input[type=text],input[type=password],input[type=date],input[type=file]{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+input:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:560px){.row{grid-template-columns:1fr}}
+button{font:inherit;padding:9px 16px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);cursor:pointer;margin-top:14px}
+button.ghost{background:transparent;color:var(--accent)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.check{display:flex;gap:8px;align-items:center;margin:12px 0 0;color:var(--ink)}
+.hint{font-size:.85rem;color:var(--mute);margin:6px 0 0}
+.warn{color:var(--warn)}
+#ask{margin-top:14px;padding:12px;border:1px dashed var(--accent);border-radius:8px}
+#groups{max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:6px;margin-top:8px}
+#groups label{display:flex;gap:10px;align-items:center;margin:0;padding:7px 10px;color:var(--ink);border-bottom:1px solid var(--line);font-size:.95rem}
+#groups label:last-child{border-bottom:0}
+.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tools button{margin-top:8px;padding:5px 10px;font-size:.85rem}
+#log{background:var(--code);color:var(--code-ink);font:13px/1.5 ui-monospace,Consolas,monospace;padding:12px;border-radius:6px;height:200px;overflow:auto;white-space:pre-wrap;margin-top:14px}
+#status{margin-top:10px;color:var(--mute);font-size:.9rem;min-height:1.4em}
+</style>
+</head>
+<body>
+<main>
+<h1>Выгрузка диалогов поддержки из Telegram</h1>
+<p class="lead">Страница входит в ваш аккаунт через GramJS, собирает сообщения из выбранных групп за период и сохраняет Excel с четырьмя листами: «Нагрузка по сотрудникам», «Нагрузка по типам», «Детальный лог» и «Сводка по дням». Расчётные листы построены на формулах. Всё работает в вашем браузере, данные никуда не отправляются.</p>
+
+<section id="s1">
+  <h2><b>1</b> Вход в Telegram</h2>
+  <div class="row">
+    <div><label for="apiId">API ID</label><input id="apiId" type="text" inputmode="numeric" autocomplete="off"></div>
+    <div><label for="apiHash">API Hash</label><input id="apiHash" type="password" autocomplete="off"></div>
+  </div>
+  <p class="hint">Получить на my.telegram.org → API development tools.</p>
+  <label class="check"><input id="remember" type="checkbox"> Запомнить вход на этом компьютере</label>
+  <p class="hint warn">Сохранённая сессия даёт полный доступ к аккаунту. Включайте только на личном устройстве.</p>
+  <button id="connect">Войти</button>
+  <div id="ask" hidden>
+    <label id="askLabel" for="askInput"></label>
+    <input id="askInput" type="text" autocomplete="off">
+    <button id="askOk">Продолжить</button>
+  </div>
+</section>
+
+<section id="s2" hidden>
+  <h2><b>2</b> Период и сотрудники</h2>
+  <div class="row">
+    <div><label for="dFrom">Начало периода</label><input id="dFrom" type="date"></div>
+    <div><label for="dTo">Конец периода</label><input id="dTo" type="date"></div>
+  </div>
+  <label for="empFile">Файл сотрудников (CSV или Excel)</label>
+  <input id="empFile" type="file" accept=".csv,.xlsx,.xls">
+  <p class="hint">Нужны колонки «ID Пользователя» и «Имя». Без файла все будут помечены как «Клиент». Время считается по Ташкенту (UTC+5).</p>
+  <p id="empInfo" class="hint"></p>
+  <label for="exclIds">Исключить отправителей (ID через запятую, например рассылки)</label>
+  <input id="exclIds" type="text" placeholder="6640038802, 123456789" autocomplete="off">
+  <label class="check"><input id="skipService" type="checkbox" checked> Пропускать служебные сообщения (вступления, закрепы и т. п.)</label>
+</section>
+
+<section id="s3" hidden>
+  <h2><b>3</b> Группы и выгрузка</h2>
+  <div class="tools">
+    <input id="gFilter" type="text" placeholder="Поиск по названию" style="max-width:260px">
+    <button class="ghost" id="gAll">Выбрать все</button>
+    <button class="ghost" id="gNone">Снять все</button>
+    <span id="gCount" class="hint"></span>
+  </div>
+  <div id="groups"></div>
+  <button id="run">Выгрузить в Excel</button>
+  <button id="stop" class="ghost" hidden>Остановить и сохранить</button>
+  <div id="status"></div>
+  <div id="log" aria-live="polite"></div>
+</section>
+</main>
+
+<script>
+const GRAMJS_URL = 'https://esm.sh/telegram@2.26.16?bundle';
+const TZ = 5 * 3600; // Ташкент, UTC+5
+const $ = s => document.querySelector(s);
+const log = t => { const l = $('#log'); l.textContent += t + '\n'; l.scrollTop = l.scrollHeight; };
+const lsGet = k => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+const lsDel = k => { try { localStorage.removeItem(k); } catch (e) {} };
+
+let client = null, employees = {}, empOrder = [], groups = [], stopFlag = false;
+
+// ---------- вспомогательное окно ввода (телефон, код, пароль) ----------
+function ask(label, secret) {
+  return new Promise(resolve => {
+    $('#ask').hidden = false;
+    $('#askLabel').textContent = label;
+    const inp = $('#askInput');
+    inp.type = secret ? 'password' : 'text';
+    inp.value = '';
+    inp.focus();
+    const done = () => { $('#ask').hidden = true; $('#askOk').onclick = null; inp.onkeydown = null; resolve(inp.value.trim()); };
+    $('#askOk').onclick = done;
+    inp.onkeydown = e => { if (e.key === 'Enter') done(); };
+  });
+}
+
+// ---------- вход ----------
+$('#apiId').value = lsGet('tg_api_id');
+$('#apiHash').value = lsGet('tg_api_hash');
+if (lsGet('tg_session')) { $('#remember').checked = true; $('#connect').textContent = 'Войти по сохранённой сессии'; }
+
+$('#connect').onclick = async () => {
+  const apiId = parseInt($('#apiId').value, 10), apiHash = $('#apiHash').value.trim();
+  if (!apiId || !apiHash) { alert('Введите API ID и API Hash'); return; }
+  $('#connect').disabled = true;
+  try {
+    log('Загрузка GramJS…');
+    const lib = await import(GRAMJS_URL);
+    const { TelegramClient, sessions } = lib;
+    const session = new sessions.StringSession(lsGet('tg_session'));
+    client = new TelegramClient(session, apiId, apiHash, { connectionRetries: 5, floodSleepThreshold: 120 });
+    await client.start({
+      phoneNumber: () => ask('Номер телефона в формате +998901234567'),
+      phoneCode: () => ask('Код из Telegram'),
+      password: () => ask('Пароль двухэтапной проверки', true),
+      onError: e => { log('Ошибка входа: ' + (e.message || e)); return true; }
+    });
+    if ($('#remember').checked) {
+      lsSet('tg_api_id', apiId); lsSet('tg_api_hash', apiHash); lsSet('tg_session', client.session.save());
+    } else { lsDel('tg_session'); }
+    const me = await client.getMe();
+    log('Авторизован: ' + (me.firstName || '') + (me.username ? ' (@' + me.username + ')' : ''));
+    $('#s1').querySelector('h2').innerHTML = '<b>1</b> Вход выполнен';
+    $('#s2').hidden = false; $('#s3').hidden = false;
+    await loadGroups();
+  } catch (e) {
+    log('Не удалось подключиться: ' + (e.message || e));
+    $('#connect').disabled = false;
+  }
+};
+
+// ---------- даты ----------
+const iso = d => d.toISOString().slice(0, 10);
+$('#dTo').value = iso(new Date());
+$('#dFrom').value = iso(new Date(Date.now() - 14 * 864e5));
+
+// ---------- сотрудники ----------
+$('#empFile').onchange = async e => {
+  employees = {}; empOrder = [];
+  const f = e.target.files[0];
+  if (!f) { $('#empInfo').textContent = ''; return; }
+  try {
+    const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: false });
+    for (const r of rows) {
+      const id = String(r['ID Пользователя'] ?? '').trim();
+      if (id) { if (!(id in employees)) empOrder.push(id); employees[id] = String(r['Имя'] ?? '').trim(); }
+    }
+    const n = Object.keys(employees).length;
+    $('#empInfo').textContent = n ? 'Загружено сотрудников: ' + n : 'Колонка «ID Пользователя» не найдена или пуста.';
+  } catch (err) { $('#empInfo').textContent = 'Не удалось прочитать файл: ' + err.message; }
+};
+
+// ---------- список групп ----------
+async function loadGroups() {
+  log('Загрузка списка групп…');
+  const dialogs = await client.getDialogs({ limit: 1000 });
+  groups = dialogs.filter(d => d.isGroup).map(d => ({ id: String(d.id), title: d.title || '(без названия)', entity: d.entity, on: true }));
+  log('Найдено групп: ' + groups.length);
+  renderGroups();
+}
+function renderGroups() {
+  const q = $('#gFilter').value.toLowerCase();
+  const box = $('#groups'); box.innerHTML = '';
+  groups.forEach((g, i) => {
+    if (q && !g.title.toLowerCase().includes(q)) return;
+    const l = document.createElement('label');
+    const c = document.createElement('input');
+    c.type = 'checkbox'; c.checked = g.on;
+    c.onchange = () => { g.on = c.checked; count(); };
+    l.append(c, document.createTextNode(g.title));
+    box.append(l);
+  });
+  count();
+}
+const count = () => { $('#gCount').textContent = 'Выбрано: ' + groups.filter(g => g.on).length + ' из ' + groups.length; };
+$('#gFilter').oninput = renderGroups;
+$('#gAll').onclick = () => { const q = $('#gFilter').value.toLowerCase(); groups.forEach(g => { if (!q || g.title.toLowerCase().includes(q)) g.on = true; }); renderGroups(); };
+$('#gNone').onclick = () => { const q = $('#gFilter').value.toLowerCase(); groups.forEach(g => { if (!q || g.title.toLowerCase().includes(q)) g.on = false; }); renderGroups(); };
+
+// ---------- выгрузка ----------
+// Как в образце: четыре типа. Голосовые, аудио и стикеры в Telegram — это документы, поэтому попадают в «Документ».
+function msgType(m) {
+  if (m.photo) return 'Фото';
+  if (m.document) return 'Документ';
+  if (m.message) return 'Текст';
+  return 'Другое';
+}
+const clean = t => String(t || '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').slice(0, 32000);
+
+$('#stop').onclick = () => { stopFlag = true; };
+
+$('#run').onclick = async () => {
+  const dFrom = $('#dFrom').value, dTo = $('#dTo').value;
+  if (!dFrom || !dTo) { alert('Укажите период'); return; }
+  const fromTs = Date.parse(dFrom + 'T00:00:00Z') / 1000 - TZ;
+  const toTs = Date.parse(dTo + 'T23:59:59Z') / 1000 - TZ;
+  if (fromTs > toTs) { alert('Начало периода позже конца'); return; }
+  const excluded = new Set($('#exclIds').value.split(/[,;\s]+/).filter(Boolean));
+  const skipService = $('#skipService').checked;
+  const selected = groups.filter(g => g.on);
+  if (!selected.length) { alert('Выберите хотя бы одну группу'); return; }
+
+  stopFlag = false;
+  $('#run').disabled = true; $('#stop').hidden = false;
+  const rows = []; let done = 0, withMsgs = 0;
+
+  for (const g of selected) {
+    if (stopFlag) break;
+    done++;
+    log('Группа ' + done + '/' + selected.length + ': ' + g.title);
+    let n = 0;
+    try {
+      for await (const m of client.iterMessages(g.entity, { offsetDate: toTs + 1, limit: 1e7 })) {
+        if (stopFlag) break;
+        if (!m.date) continue;
+        if (m.date < fromTs) break;
+        if (m.date > toTs) continue;
+        if (skipService && m.action) continue;
+
+        const senderId = m.senderId != null ? String(m.senderId) : 'Unknown';
+        if (excluded.has(senderId)) continue;
+        let role, name;
+        if (senderId in employees) { role = 'Сотрудник'; name = employees[senderId]; }
+        else {
+          role = 'Клиент'; name = 'Неизвестно';
+          const s = m.sender;
+          if (s) { if (s.firstName) name = s.firstName + (s.lastName ? ' ' + s.lastName : ''); else if (s.title) name = s.title; }
+        }
+        const t = new Date((m.date + TZ) * 1000).toISOString();
+        rows.push({
+          'Дата': t.slice(0, 10), 'Время': t.slice(11, 19),
+          'ID группы': g.id, 'Название группы': g.title,
+          'ID отправителя': senderId, 'Имя отправителя': name, 'Роль': role,
+          'Тип сообщения': msgType(m),
+          'Текст сообщения': clean((() => { try { return m.text; } catch (e) { return m.message; } })() || m.message)
+        });
+        n++;
+        if (n % 200 === 0) $('#status').textContent = g.title + ': ' + n + ' сообщений…';
+      }
+    } catch (e) { log('  ошибка в группе: ' + (e.message || e)); }
+    if (n) { withMsgs++; log('  найдено сообщений: ' + n); }
+  }
+
+  $('#stop').hidden = true; $('#run').disabled = false;
+  if (!rows.length) { $('#status').textContent = 'За выбранный период сообщений не найдено.'; return; }
+
+  try {
+    await saveWorkbook(rows, dFrom, dTo);
+    $('#status').textContent = 'Готово: ' + rows.length + ' сообщений из ' + withMsgs + ' групп. Файл support_analytics.xlsx сохранён.';
+  } catch (e) {
+    $('#status').textContent = 'Ошибка при создании Excel: ' + (e.message || e);
+    log('Ошибка при создании Excel: ' + (e.stack || e));
+    return;
+  }
+  log('Готово. Групп с сообщениями: ' + withMsgs + ' из ' + selected.length + ', всего сообщений: ' + rows.length);
+};
+
+// ---------- Excel в формате образца ----------
+const colL = n => { let t = ''; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = Math.floor((n - 1) / 26); } return t; };
+const sumA = a => a.reduce((x, y) => x + y, 0);
+const avgA = a => a.length ? sumA(a) / a.length : 0;
+const medA = a => { if (!a.length) return 0; const b = [...a].sort((x, y) => x - y), h = b.length >> 1; return b.length % 2 ? b[h] : (b[h - 1] + b[h]) / 2; };
+
+async function saveWorkbook(rows, dFrom, dTo) {
+  const LOG = "'Детальный лог'", N = rows.length + 1;
+  const wb = new ExcelJS.Workbook();
+  const thin = { style: 'thin', color: { argb: 'FFBFBFBF' } };
+  const BORDER = { top: thin, left: thin, bottom: thin, right: thin };
+  const HEAD = c => { c.font = { name: 'Cambria', bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF305496' } }; c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; c.border = BORDER; };
+  const TOTAL = c => { c.font = { name: 'Cambria', bold: true }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E1F2' } }; c.border = BORDER; };
+  const put = (ws, r, c, v, nf, fmt) => { const cell = ws.getCell(r, c); cell.value = v; if (nf) cell.numFmt = nf; if (fmt) fmt(cell); return cell; };
+  const body = c => { c.border = BORDER; };
+
+  // агрегаты по сотрудникам
+  const days = [];
+  for (let t = Date.parse(dFrom + 'T00:00:00Z'); t <= Date.parse(dTo + 'T00:00:00Z'); t += 864e5) days.push(new Date(t).toISOString().slice(0, 10));
+  const TYPES = ['Текст', 'Фото', 'Документ', 'Другое'];
+  const agg = {};
+  for (const r of rows) {
+    if (r['Роль'] !== 'Сотрудник') continue;
+    const a = agg[r['ID отправителя']] ||= { day: {}, type: {}, groups: new Set() };
+    a.day[r['Дата']] = (a.day[r['Дата']] || 0) + 1;
+    a.type[r['Тип сообщения']] = (a.type[r['Тип сообщения']] || 0) + 1;
+    a.groups.add(r['ID группы']);
+  }
+  const emps = empOrder.filter(id => agg[id]);
+
+  if (emps.length) {
+    // ---- лист 1: нагрузка по сотрудникам ----
+    const ws = wb.addWorksheet('Нагрузка по сотрудникам', { views: [{ state: 'frozen', xSplit: 2, ySplit: 3 }] });
+    const D = days.length, cT = 3 + D, cAvg = cT + 1, cAvgAct = cT + 2, cAct = cT + 3, cGr = cT + 4, cSh = cT + 5;
+    const first = 4, last = 3 + emps.length, tot = last + 1;
+    put(ws, 1, 1, 'Нагрузка на сотрудника: количество сообщений по дням (только роль «Сотрудник»)', null, c => { c.font = { name: 'Cambria', size: 13, bold: true }; });
+    ws.getRow(1).height = 16.8; ws.getRow(3).height = 45;
+    const heads = ['ID сотрудника', 'Сотрудник', ...days, 'Всего', 'Среднее в день (' + D + ' дн.)', 'Среднее в активный день', 'Активных дней', 'Групп', 'Доля, %'];
+    heads.forEach((h, i) => put(ws, 3, i + 1, h, null, HEAD));
+
+    const m = []; // значения для кэша формул
+    const total = emps.reduce((s, id) => s + sumA(days.map(d => agg[id].day[d] || 0)), 0);
+    emps.forEach((id, i) => {
+      const r = first + i, a = agg[id], perDay = days.map(d => a.day[d] || 0), sum = sumA(perDay), act = perDay.filter(x => x > 0).length;
+      const v = { perDay, sum, avg: sum / D, avgAct: act ? sum / act : 0, act, gr: a.groups.size, share: total ? sum / total : 0 };
+      m.push(v);
+      put(ws, r, 1, id, null, body); put(ws, r, 2, employees[id], null, body);
+      days.forEach((d, k) => put(ws, r, 3 + k, { formula: `COUNTIFS(${LOG}!$E$2:$E$${N},$A${r},${LOG}!$A$2:$A$${N},${colL(3 + k)}$3,${LOG}!$G$2:$G$${N},"Сотрудник")`, result: perDay[k] }, '0', body));
+      const dr = `C${r}:${colL(2 + D)}${r}`;
+      put(ws, r, cT, { formula: `SUM(${dr})`, result: sum }, '0', body);
+      put(ws, r, cAvg, { formula: `${colL(cT)}${r}/COUNTA(C$3:${colL(2 + D)}$3)`, result: v.avg }, '0.0', body);
+      put(ws, r, cAvgAct, { formula: `IF(${colL(cAct)}${r}=0,0,${colL(cT)}${r}/${colL(cAct)}${r})`, result: v.avgAct }, '0.0', body);
+      put(ws, r, cAct, { formula: `COUNTIF(${dr},">0")`, result: act }, '0', body);
+      put(ws, r, cGr, v.gr, '0', body);
+      put(ws, r, cSh, { formula: `${colL(cT)}${r}/${colL(cT)}$${tot}`, result: v.share }, '0.0%', body);
+    });
+    // колонки с числами для итоговых строк: дни, Всего, Среднее в день, Среднее в активный день, Активных дней
+    const colVals = c => m.map(v => c <= 2 + D ? v.perDay[c - 3] : c === cT ? v.sum : c === cAvg ? v.avg : c === cAvgAct ? v.avgAct : v.act);
+    const rng = c => `${colL(c)}${first}:${colL(c)}${last}`;
+    const rowsDef = [
+      { label: 'ИТОГО', r: tot },
+      { label: 'СРЕДНЕЕ на сотрудника', r: tot + 1 },
+      { label: 'МЕДИАНА на сотрудника', r: tot + 2 },
+      { label: 'СРЕДНЕЕ по «основным» (≥300 сообщ. за период)', r: tot + 3 }
+    ];
+    rowsDef.forEach(d => { for (let c = 1; c <= cSh; c++) put(ws, d.r, c, null, null, TOTAL); put(ws, d.r, 2, d.label, null, TOTAL); });
+    for (let c = 3; c <= cAvg; c++) {
+      const vals = colVals(c), main = m.map((v, i) => v.sum >= 300 ? vals[i] : null).filter(x => x !== null);
+      put(ws, tot, c, c === cAvg ? { formula: `${colL(cT)}${tot}/COUNTA(C$3:${colL(2 + D)}$3)`, result: sumA(m.map(v => v.sum)) / D } : { formula: `SUM(${rng(c)})`, result: sumA(vals) }, c === cAvg ? '0.0' : '0');
+      put(ws, tot + 2, c, { formula: `MEDIAN(${rng(c)})`, result: medA(vals) }, '0.0');
+      put(ws, tot + 3, c, main.length ? { formula: `AVERAGEIF($${colL(cT)}$${first}:$${colL(cT)}$${last},">=300",${rng(c)})`, result: avgA(main) } : { formula: `IFERROR(AVERAGEIF($${colL(cT)}$${first}:$${colL(cT)}$${last},">=300",${rng(c)}),0)`, result: 0 }, '0.0');
+    }
+    for (let c = 3; c <= cAct; c++) put(ws, tot + 1, c, { formula: `AVERAGE(${rng(c)})`, result: avgA(colVals(c)) }, '0.0');
+    put(ws, tot, cSh, { formula: `SUM(${rng(cSh)})`, result: total ? 1 : 0 }, '0.0%');
+    // Для строки «основные» формула без IFERROR, как в образце, если есть подходящие сотрудники
+    put(ws, tot + 5, 1, 'Примечания: данные — только сообщения с ролью «Сотрудник» из листа «Детальный лог»; исключения (служебные сообщения, указанные ID отправителей) применены при выгрузке. Числа в таблице — формулы, пересчитываются при изменении лога. Колонка «Групп» — число групп, где сотрудник писал за период.');
+    ws.getColumn(1).width = 14; ws.getColumn(2).width = 44;
+    for (let c = 3; c <= cSh; c++) ws.getColumn(c).width = 13;
+
+    // ---- лист 2: нагрузка по типам ----
+    const wt = wb.addWorksheet('Нагрузка по типам', { views: [{ state: 'frozen', xSplit: 2, ySplit: 3 }] });
+    put(wt, 1, 1, 'Сообщения сотрудников по типам', null, c => { c.font = { name: 'Cambria', size: 13, bold: true }; });
+    wt.getRow(1).height = 16.8; wt.getRow(3).height = 27.6;
+    ['ID сотрудника', 'Сотрудник', ...TYPES, 'Всего'].forEach((h, i) => put(wt, 3, i + 1, h, null, HEAD));
+    const tLast = 3 + emps.length, tTot = tLast + 1;
+    const typeVals = TYPES.map(() => []); const tSums = [];
+    emps.forEach((id, i) => {
+      const r = 4 + i, a = agg[id];
+      put(wt, r, 1, id, null, body); put(wt, r, 2, employees[id], null, body);
+      let rs = 0;
+      TYPES.forEach((t, k) => { const n = a.type[t] || 0; rs += n; typeVals[k].push(n); put(wt, r, 3 + k, { formula: `COUNTIFS(${LOG}!$E$2:$E$${N},$A${r},${LOG}!$H$2:$H$${N},${colL(3 + k)}$3,${LOG}!$G$2:$G$${N},"Сотрудник")`, result: n }, null, body); });
+      tSums.push(rs);
+      put(wt, r, 3 + TYPES.length, { formula: `SUM(C${r}:${colL(2 + TYPES.length)}${r})`, result: rs }, null, body);
+    });
+    [tTot, tTot + 1].forEach(r => { for (let c = 1; c <= 3 + TYPES.length; c++) put(wt, r, c, null, null, TOTAL); });
+    put(wt, tTot, 2, 'ИТОГО', null, TOTAL); put(wt, tTot + 1, 2, 'СРЕДНЕЕ на сотрудника', null, TOTAL);
+    for (let c = 3; c <= 3 + TYPES.length; c++) {
+      const vals = c <= 2 + TYPES.length ? typeVals[c - 3] : tSums, rg = `${colL(c)}4:${colL(c)}${tLast}`;
+      put(wt, tTot, c, { formula: `SUM(${rg})`, result: sumA(vals) }, null);
+      put(wt, tTot + 1, c, { formula: `AVERAGE(${rg})`, result: avgA(vals) }, '0.0');
+    }
+    wt.getColumn(1).width = 14; wt.getColumn(2).width = 44;
+    for (let c = 3; c <= 3 + TYPES.length; c++) wt.getColumn(c).width = 12;
+  } else {
+    log('Файл сотрудников не загружен или в выгрузке нет сообщений сотрудников: листы нагрузки пропущены.');
+  }
+
+  // ---- лист 3: детальный лог ----
+  const wl = wb.addWorksheet('Детальный лог');
+  const logHead = ['Дата', 'Время', 'ID группы', 'Название группы', 'ID отправителя', 'Имя отправителя', 'Роль', 'Тип сообщения', 'Текст сообщения'];
+  wl.addRow(logHead);
+  wl.addRows(rows.map(r => logHead.map(h => r[h])));
+  wl.autoFilter = { from: 'A1', to: 'I' + N };
+  wl.getColumn(4).width = 20; wl.getColumn(6).width = 14.6; wl.getColumn(9).width = 28.2;
+
+  // ---- лист 4: сводка по дням ----
+  const wsd = wb.addWorksheet('Сводка по дням');
+  ['Дата', 'Роль', 'Тип сообщения', 'Количество'].forEach((h, i) => wsd.getCell(1, i + 1).value = h);
+  const cnt = {};
+  for (const r of rows) { const k = [r['Дата'], r['Роль'], r['Тип сообщения']].join('|'); cnt[k] = (cnt[k] || 0) + 1; }
+  Object.keys(cnt).sort().forEach((k, i) => {
+    const [d, ro, ty] = k.split('|'), r = i + 2;
+    wsd.getCell(r, 1).value = d; wsd.getCell(r, 2).value = ro; wsd.getCell(r, 3).value = ty;
+    wsd.getCell(r, 4).value = { formula: `COUNTIFS(${LOG}!$A:$A, A${r}, ${LOG}!$G:$G, B${r}, ${LOG}!$H:$H, C${r})`, result: cnt[k] };
+  });
+  wsd.getColumn(1).width = 10.3; wsd.getColumn(2).width = 10.4; wsd.getColumn(3).width = 14.7;
+
+  const buf = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = 'support_analytics.xlsx'; document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+</script>
+</body>
+</html>
