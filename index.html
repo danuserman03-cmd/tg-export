@@ -106,17 +106,32 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
 const lsDel = k => { try { localStorage.removeItem(k); } catch (e) {} };
 
 let client = null, employees = {}, empOrder = [], groups = [], stopFlag = false;
+let askResolve = null; // Храним функцию разрешения промиса для ask
 
 // ---------- вспомогательное окно ввода (телефон, код, пароль) ----------
 function ask(label, secret) {
   return new Promise(resolve => {
+    askResolve = resolve;
     $('#ask').hidden = false;
     $('#askLabel').textContent = label;
     const inp = $('#askInput');
     inp.type = secret ? 'password' : 'text';
     inp.value = '';
     inp.focus();
-    const done = () => { $('#ask').hidden = true; $('#askOk').onclick = null; inp.onkeydown = null; resolve(inp.value.trim()); };
+    
+    const cleanup = () => {
+        $('#ask').hidden = true;
+        $('#askOk').onclick = null;
+        inp.onkeydown = null;
+        askResolve = null;
+    };
+    
+    const done = () => {
+        const val = inp.value.trim();
+        cleanup();
+        resolve(val);
+    };
+    
     $('#askOk').onclick = done;
     inp.onkeydown = e => { if (e.key === 'Enter') done(); };
   });
@@ -142,13 +157,35 @@ $('#connect').onclick = async () => {
     const { TelegramClient, sessions } = lib;
     
     const session = new sessions.StringSession(lsGet('tg_session'));
+    
+    // --- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Принудительно указываем DC2 ---
+    // Это предотвращает ошибку "Auth key unset" после миграции.
+    // Используем веб-эндпоинт для DC2.
+    session.setDC(2, 'venus.web.telegram.org', 443);
+    // --------------------------------------------------------
+
     client = new TelegramClient(session, apiId, apiHash, { connectionRetries: 5, floodSleepThreshold: 120 });
+    
+    // --- Безопасная обработка ввода кода ---
+    let phoneCodeCallbackUsed = false;
     await client.start({
       phoneNumber: () => ask('Номер телефона в формате +998901234567'),
-      phoneCode: () => ask('Код из Telegram'),
+      phoneCode: async () => {
+          if (phoneCodeCallbackUsed) {
+              throw new Error('Повторный запрос кода. Возможно, введён неверный код. Пожалуйста, перезагрузите страницу и попробуйте снова.');
+          }
+          phoneCodeCallbackUsed = true;
+          return ask('Код из Telegram');
+      },
       password: () => ask('Пароль двухэтапной проверки', true),
-      onError: e => { log('Ошибка входа: ' + (e.message || e)); return true; }
+      onError: e => { 
+          log('Ошибка входа: ' + (e.message || e)); 
+          // Возвращаем false, чтобы остановить циклические попытки
+          return false; 
+      }
     });
+    // -----------------------------------------
+
     if ($('#remember').checked) {
       lsSet('tg_api_id', apiId); lsSet('tg_api_hash', apiHash); lsSet('tg_session', client.session.save());
     } else { lsDel('tg_session'); }
@@ -405,7 +442,8 @@ async function saveWorkbook(rows, dFrom, dTo) {
   Object.keys(cnt).sort().forEach((k, i) => {
     const [d, ro, ty] = k.split('|'), r = i + 2;
     wsd.getCell(r, 1).value = d; wsd.getCell(r, 2).value = ro; wsd.getCell(r, 3).value = ty;
-    wsd.getCell(r, 4).value = { formula: `COUNTIFS(${LOG}!$A:$A, A${r}, ${LOG}!$G:$G, B${r}, ${LOG}$H:$H, C${r})`.replace('$H:$H', '!$H:$H'), result: cnt[k] };
+    // Исправленная формула
+    wsd.getCell(r, 4).value = { formula: `COUNTIFS(${LOG}!$A:$A, A${r}, ${LOG}!$G:$G, B${r}, ${LOG}!$H:$H, C${r})`, result: cnt[k] };
   });
   wsd.getColumn(1).width = 10.3; wsd.getColumn(2).width = 10.4; wsd.getColumn(3).width = 14.7;
 
