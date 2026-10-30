@@ -70,7 +70,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
     <div><label for="dTo">Конец периода</label><input id="dTo" type="date"></div>
   </div>
   <label for="empFile">Файл сотрудников (CSV или Excel)</label>
-  <input id="empFile" type="file" accept=".csv,.xlsx,.xls">
+  <input id="empFile" type="file" accept=".csv,.txt,.tsv,.xlsx,.xls">
   <p class="hint">Нужны колонки с ID и Именем. Скрипт ищет колонки: «ID Пользователя», «ID», «User ID» и «Имя», «ФИО», «Name».</p>
   <p id="empInfo" class="hint"></p>
   <label for="exclIds">Исключить отправителей (ID через запятую, например рассылки)</label>
@@ -133,19 +133,19 @@ $('#connect').onclick = async () => {
   $('#connect').disabled = true;
   try {
     $('#connect').textContent = 'Подключение…';
-    
+
     if (!window.telegram) {
         throw new Error('Библиотека telegram.js не загружена. Убедитесь, что файл лежит рядом с index.html.');
     }
     const { TelegramClient, sessions } = window.telegram;
-    
+
     const session = new sessions.StringSession(lsGet('tg_session'));
-    
+
     // Принудительно указываем DC2 для предотвращения ошибки Auth key unset
     session.setDC(2, 'venus.web.telegram.org', 443);
 
     client = new TelegramClient(session, apiId, apiHash, { connectionRetries: 5, floodSleepThreshold: 120 });
-    
+
     let phoneCodeCallbackUsed = false;
     await client.start({
       phoneNumber: () => ask('Номер телефона в формате +998901234567'),
@@ -157,9 +157,9 @@ $('#connect').onclick = async () => {
           return ask('Код из Telegram');
       },
       password: () => ask('Пароль двухэтапной проверки', true),
-      onError: e => { 
-          log('Ошибка входа: ' + (e.message || e)); 
-          return false; 
+      onError: e => {
+          log('Ошибка входа: ' + (e.message || e));
+          return false;
       }
     });
 
@@ -182,59 +182,108 @@ const iso = d => d.toISOString().slice(0, 10);
 $('#dTo').value = iso(new Date());
 $('#dFrom').value = iso(new Date(Date.now() - 14 * 864e5));
 
-// ---------- сотрудники (УЛУЧШЕННЫЙ ПАРСИНГ) ----------
+// ---------- сотрудники (УЛУЧШЕННЫЙ ПАРСИНГ v2) ----------
+async function readCsvAsText(file) {
+  const buf = await file.arrayBuffer();
+  const b = new Uint8Array(buf);
+  // BOM
+  if (b.length >= 3 && b[0] === 0xEF && b[1] === 0xBB && b[2] === 0xBF) {
+    return new TextDecoder('utf-8').decode(buf.slice(3));
+  }
+  if (b.length >= 2 && b[0] === 0xFF && b[1] === 0xFE) {
+    return new TextDecoder('utf-16le').decode(buf);
+  }
+  if (b.length >= 2 && b[0] === 0xFE && b[1] === 0xFF) {
+    return new TextDecoder('utf-16be').decode(buf);
+  }
+  // Нет BOM: пробуем UTF-8 строго, при ошибке — CP1251
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch (e) {
+    try {
+      log('CSV не UTF-8, читаю как Windows-1251');
+      return new TextDecoder('windows-1251').decode(buf);
+    } catch (e2) {
+      return new TextDecoder('utf-8').decode(buf);
+    }
+  }
+}
+
 $('#empFile').onchange = async e => {
   employees = {}; empOrder = [];
   const f = e.target.files[0];
   if (!f) { $('#empInfo').textContent = ''; return; }
   try {
-    const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+    const fname = (f.name || '').toLowerCase();
+    let wb;
+    if (fname.endsWith('.csv') || fname.endsWith('.txt') || fname.endsWith('.tsv')) {
+      const text = await readCsvAsText(f);
+      wb = XLSX.read(text, { type: 'string', raw: false });
+    } else {
+      wb = XLSX.read(await f.arrayBuffer(), { type: 'array', codepage: 65001 });
+    }
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: false });
-    
     if (rows.length === 0) {
-       $('#empInfo').textContent = 'Файл пуст.';
-       return;
+      $('#empInfo').textContent = 'Файл пуст.';
+      return;
     }
 
-    // Автоматически ищем нужные колонки
-    const sampleRow = rows[0];
-    const keys = Object.keys(sampleRow);
-    
+    const keys = Object.keys(rows[0]);
+    const cleanKey = k => String(k).replace(/^\uFEFF/, '').toLowerCase().replace(/[\s._\-]/g, '');
+
     // Ищем ID (ID Пользователя, ID, id, User ID, ИД)
     const idKey = keys.find(k => {
-        const lower = k.toLowerCase().replace(/\s+/g, '');
-        return lower === 'id' || lower === 'idпользователя' || lower === 'userid' || lower === 'ид' || lower.includes('id');
-    });
-    
-    // Ищем Имя (Имя, ФИО, Name)
-    const nameKey = keys.find(k => {
-        const lower = k.toLowerCase();
-        return lower.includes('имя') || lower.includes('name') || lower.includes('фио');
+      const c = cleanKey(k);
+      return c === 'id' || c === 'ид' || c.includes('id') || c.includes('ид');
     });
 
+    // Ищем Имя (Имя, ФИО, Name, Сотрудник, Employee, FullName)
+    let nameKey = keys.find(k => {
+      const c = cleanKey(k);
+      return c.includes('имя') || c.includes('фио') || c.includes('name')
+          || c.includes('сотрудник') || c.includes('employee') || c.includes('fullname');
+    });
+
+    // Fallback: если заголовок не распознан — ищем колонку по содержимому
+    if (!nameKey) {
+      for (const k of keys) {
+        if (k === idKey) continue;
+        const v = String(rows[0][k] ?? '').trim();
+        if (!v) continue;
+        if (/@/.test(v)) continue;              // email
+        if (/^[+\d\s\-()]+$/.test(v)) continue; // телефон / только цифры
+        if (/^\d+$/.test(v)) continue;          // только цифры
+        if (/[\p{L}]/u.test(v)) {
+          nameKey = k;
+          log('Колонка с именем найдена по содержимому: "' + k + '"');
+          break;
+        }
+      }
+    }
+
+    log('Колонки файла: ' + keys.map(k => '"' + k + '"').join(', '));
+    log('Определены — ID: "' + idKey + '"' + (nameKey ? ', Имя: "' + nameKey + '"' : ', Имя: НЕ НАЙДЕНА'));
+
     if (!idKey) {
-        throw new Error('Не найдена колонка с ID. Убедитесь, что есть колонка "ID Пользователя" или "ID".');
+      throw new Error('Не найдена колонка с ID. Убедитесь, что есть колонка "ID Пользователя" или "ID".');
     }
 
     for (const r of rows) {
-      // Извлекаем ID и очищаем от лишних символов (пробелов, точек, кавычек)
-      let rawId = String(r[idKey] ?? '').trim();
-      // Заменяем всё, что не цифры или минус
-      let id = rawId.replace(/[^0-9-]/g, '');
-      
+      const id = String(r[idKey] ?? '').trim().replace(/[^0-9-]/g, '');
       if (id) {
         if (!(id in employees)) empOrder.push(id);
-        // Если колонка с именем не найдена, ставим заглушку
         employees[id] = nameKey ? String(r[nameKey]).trim() : 'Сотрудник';
       }
     }
-    
+
     const n = Object.keys(employees).length;
-    $('#empInfo').textContent = n ? 'Загружено сотрудников: ' + n : 'Колонка с ID найдена, но она пуста.';
-    log('Файл сотрудников загружен. Найдено записей: ' + n + ' (Колонка ID: "' + idKey + '")');
-  } catch (err) { 
-      $('#empInfo').textContent = 'Ошибка чтения: ' + err.message; 
-      log('Ошибка чтения файла сотрудников: ' + err.message);
+    $('#empInfo').textContent = n
+      ? 'Загружено сотрудников: ' + n + (nameKey ? '' : ' ⚠ имена не распознаны — проверьте заголовок колонки')
+      : 'Колонка с ID найдена, но она пуста.';
+    log('Файл сотрудников загружен. Записей: ' + n + (nameKey ? ' с именами' : ' (имён нет!)'));
+  } catch (err) {
+    $('#empInfo').textContent = 'Ошибка чтения: ' + err.message;
+    log('Ошибка чтения файла сотрудников: ' + err.message);
   }
 };
 
@@ -311,12 +360,12 @@ $('#run').onclick = async () => {
         } else if (m.sender && m.sender.id) {
             senderId = String(m.sender.id);
         }
-        
+
         if (excluded.has(senderId)) continue;
         let role, name;
-        if (senderId in employees) { 
-            role = 'Сотрудник'; 
-            name = employees[senderId]; 
+        if (senderId in employees) {
+            role = 'Сотрудник';
+            name = employees[senderId];
         } else {
             role = 'Клиент'; name = 'Неизвестно';
             const s = m.sender;
