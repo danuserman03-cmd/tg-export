@@ -6,6 +6,8 @@
 <title>Выгрузка диалогов поддержки из Telegram</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<!-- Подключаем локальную браузерную сборку GramJS -->
+<script src="./telegram.js"></script>
 <style>
 :root{--bg:#eef2f5;--panel:#fff;--ink:#16222b;--mute:#5d6e7a;--line:#cfd9e0;--accent:#1f6f8b;--accent-ink:#fff;--warn:#9a3b1f;--code:#0f1a21;--code-ink:#cfe3ee}
 @media (prefers-color-scheme:dark){:root{--bg:#0f171d;--panel:#17222a;--ink:#e4edf2;--mute:#8fa3b0;--line:#2b3b46;--accent:#5bb4d1;--accent-ink:#0b1318;--warn:#e59a7d;--code:#0a1116;--code-ink:#b9d3e0}}
@@ -94,34 +96,6 @@ button:disabled{opacity:.5;cursor:not-allowed}
 </main>
 
 <script>
-const GRAMJS_URLS = [
-  'https://esm.sh/telegram@2.26.16?bundle',
-  'https://esm.sh/telegram@2.26.16',
-  'https://cdn.jsdelivr.net/npm/telegram@2.26.16/+esm',
-  'https://cdn.skypack.dev/telegram@2.26.16'
-];
-// GramJS написан под Node.js: в браузере ему нужен глобальный Buffer
-async function loadPolyfills() {
-  if (window.Buffer) return;
-  const srcs = ['https://esm.sh/buffer@6.0.3', 'https://cdn.jsdelivr.net/npm/buffer@6.0.3/+esm'];
-  for (const u of srcs) {
-    try {
-      const m = await import(u);
-      const B = m.Buffer || (m.default && m.default.Buffer);
-      if (B) { window.Buffer = B; log('Buffer подключён'); return; }
-    } catch (e) { log('  Buffer не загрузился из ' + u + ': ' + (e.message || e)); }
-  }
-  throw new Error('не удалось подключить Buffer');
-}
-async function loadGramJS() {
-  await loadPolyfills();
-  let last;
-  for (const u of GRAMJS_URLS) {
-    try { log('Загрузка GramJS: ' + u + ' (до 60 с)'); const m = await Promise.race([import(u), new Promise((_, rej) => setTimeout(() => rej(new Error('таймаут 60 с')), 60000))]); if (m.TelegramClient) return m; last = new Error('в модуле нет TelegramClient'); }
-    catch (e) { last = e; log('  не удалось: ' + (e.message || e)); }
-  }
-  throw last || new Error('GramJS не загрузился');
-}
 window.addEventListener('error', e => log('Ошибка скрипта: ' + e.message));
 window.addEventListener('unhandledrejection', e => log('Ошибка: ' + ((e.reason && e.reason.message) || e.reason)));
 const TZ = 5 * 3600; // Ташкент, UTC+5
@@ -159,8 +133,13 @@ $('#connect').onclick = async () => {
   $('#connect').disabled = true;
   try {
     $('#connect').textContent = 'Подключение…';
-    const lib = await loadGramJS();
-    const { TelegramClient, sessions } = lib;
+    
+    // ИСПОЛЬЗУЕМ ЛОКАЛЬНУЮ СБОРКУ
+    if (!window.telegram) {
+        throw new Error('Библиотека telegram.js не загружена. Убедитесь, что файл лежит рядом с index.html.');
+    }
+    const { TelegramClient, sessions } = window.telegram;
+    
     const session = new sessions.StringSession(lsGet('tg_session'));
     client = new TelegramClient(session, apiId, apiHash, { connectionRetries: 5, floodSleepThreshold: 120 });
     await client.start({
