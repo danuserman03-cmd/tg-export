@@ -6,7 +6,6 @@
 <title>Выгрузка диалогов поддержки из Telegram</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
-<!-- Подключаем локальную сборку -->
 <script src="./gramjs.js"></script>
 <style>
 :root{--bg:#eef2f5;--panel:#fff;--ink:#16222b;--mute:#5d6e7a;--line:#cfd9e0;--accent:#1f6f8b;--accent-ink:#fff;--warn:#9a3b1f;--code:#0f1a21;--code-ink:#cfe3ee}
@@ -182,31 +181,103 @@ const iso = d => d.toISOString().slice(0, 10);
 $('#dTo').value = iso(new Date());
 $('#dFrom').value = iso(new Date(Date.now() - 14 * 864e5));
 
-// ---------- сотрудники (УЛУЧШЕННЫЙ ПАРСИНГ v2) ----------
+// ============================================================
+// -------- сотрудники (РУЧНОЙ ПАРСЕР CSV + XLSX) ------------
+// ============================================================
+
+// Определение кодировки и чтение CSV в текст
 async function readCsvAsText(file) {
   const buf = await file.arrayBuffer();
   const b = new Uint8Array(buf);
-  // BOM
   if (b.length >= 3 && b[0] === 0xEF && b[1] === 0xBB && b[2] === 0xBF) {
+    log('CSV: определён UTF-8 с BOM');
     return new TextDecoder('utf-8').decode(buf.slice(3));
   }
   if (b.length >= 2 && b[0] === 0xFF && b[1] === 0xFE) {
+    log('CSV: определён UTF-16 LE');
     return new TextDecoder('utf-16le').decode(buf);
   }
   if (b.length >= 2 && b[0] === 0xFE && b[1] === 0xFF) {
+    log('CSV: определён UTF-16 BE');
     return new TextDecoder('utf-16be').decode(buf);
   }
-  // Нет BOM: пробуем UTF-8 строго, при ошибке — CP1251
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+    const t = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+    log('CSV: определён UTF-8 без BOM');
+    return t;
   } catch (e) {
-    try {
-      log('CSV не UTF-8, читаю как Windows-1251');
-      return new TextDecoder('windows-1251').decode(buf);
-    } catch (e2) {
-      return new TextDecoder('utf-8').decode(buf);
+    log('CSV: UTF-8 не прошёл — читаю как Windows-1251');
+    return new TextDecoder('windows-1251').decode(buf);
+  }
+}
+
+// Полноценный CSV-парсер (кавычки, многострочные значения, автоопределение разделителя)
+function parseCsv(text) {
+  // Разбиваем на строки с учётом кавычек
+  const lines = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (inQ && text[i+1] === '"') { cur += '""'; i++; }
+      else { inQ = !inQ; cur += ch; }
+    } else if ((ch === '\n' || ch === '\r') && !inQ) {
+      if (cur.trim()) lines.push(cur);
+      cur = '';
+      if (ch === '\r' && text[i+1] === '\n') i++;
+    } else {
+      cur += ch;
     }
   }
+  if (cur.trim()) lines.push(cur);
+
+  if (!lines.length) return { headers: [], rows: [] };
+
+  // Автоопределение разделителя по первой строке
+  const first = lines[0];
+  const counts = { ',': 0, ';': 0, '\t': 0 };
+  let inQ2 = false;
+  for (const ch of first) {
+    if (ch === '"') inQ2 = !inQ2;
+    else if (!inQ2 && counts[ch] !== undefined) counts[ch]++;
+  }
+  const delim = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+  log('CSV: разделитель "' + (delim === '\t' ? '\\t' : delim) + '"');
+
+  const parseLine = line => {
+    const out = [];
+    let cell = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQ) {
+        if (ch === '"') {
+          if (line[i+1] === '"') { cell += '"'; i++; }
+          else inQ = false;
+        } else cell += ch;
+      } else {
+        if (ch === '"') inQ = true;
+        else if (ch === delim) { out.push(cell); cell = ''; }
+        else cell += ch;
+      }
+    }
+    out.push(cell);
+    return out;
+  };
+
+  const headers = parseLine(lines[0]).map(h => h.replace(/^\uFEFF/, '').trim());
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const vals = parseLine(lines[i]);
+    if (vals.every(v => !String(v).trim())) continue;
+    const obj = {};
+    for (let j = 0; j < headers.length; j++) obj[headers[j]] = vals[j] ?? '';
+    rows.push(obj);
+  }
+  return { headers, rows };
+}
+
+function hexCodes(s) {
+  return [...String(s)].map(c => 'U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')).join(' ');
 }
 
 $('#empFile').onchange = async e => {
@@ -215,72 +286,77 @@ $('#empFile').onchange = async e => {
   if (!f) { $('#empInfo').textContent = ''; return; }
   try {
     const fname = (f.name || '').toLowerCase();
-    let wb;
+    let rows, headers;
+
     if (fname.endsWith('.csv') || fname.endsWith('.txt') || fname.endsWith('.tsv')) {
       const text = await readCsvAsText(f);
-      wb = XLSX.read(text, { type: 'string', raw: false });
+      log('Длина текста: ' + text.length + ' символов');
+      log('Первые 120 символов: ' + JSON.stringify(text.slice(0, 120)));
+      const parsed = parseCsv(text);
+      rows = parsed.rows;
+      headers = parsed.headers;
+      log('CSV разобран. Заголовков: ' + headers.length + ', строк данных: ' + rows.length);
     } else {
-      wb = XLSX.read(await f.arrayBuffer(), { type: 'array', codepage: 65001 });
-    }
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: false });
-    if (rows.length === 0) {
-      $('#empInfo').textContent = 'Файл пуст.';
-      return;
+      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array', codepage: 65001 });
+      rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: false });
+      headers = rows.length ? Object.keys(rows[0]) : [];
+      log('Excel прочитан. Строк данных: ' + rows.length);
     }
 
-    const keys = Object.keys(rows[0]);
-    const cleanKey = k => String(k).replace(/^\uFEFF/, '').toLowerCase().replace(/[\s._\-]/g, '');
+    if (!rows.length) { $('#empInfo').textContent = 'Файл пуст.'; return; }
 
-    // Ищем ID (ID Пользователя, ID, id, User ID, ИД)
-    const idKey = keys.find(k => {
+    // Показать заголовки с кодами символов
+    log('Заголовки: ' + headers.map(h => '"' + h + '"').join(', '));
+    headers.forEach(h => log('  "' + h + '" → ' + hexCodes(h)));
+
+    const cleanKey = k => String(k).replace(/^\uFEFF/, '').trim().toLowerCase().replace(/[\s._\-]/g, '');
+
+    const idKey = headers.find(k => {
       const c = cleanKey(k);
       return c === 'id' || c === 'ид' || c.includes('id') || c.includes('ид');
     });
 
-    // Ищем Имя (Имя, ФИО, Name, Сотрудник, Employee, FullName)
-    let nameKey = keys.find(k => {
+    let nameKey = headers.find(k => {
       const c = cleanKey(k);
       return c.includes('имя') || c.includes('фио') || c.includes('name')
           || c.includes('сотрудник') || c.includes('employee') || c.includes('fullname');
     });
 
-    // Fallback: если заголовок не распознан — ищем колонку по содержимому
+    // Fallback: если заголовок не распознан — ищем колонку по содержимому первой строки данных
     if (!nameKey) {
-      for (const k of keys) {
+      log('Заголовок с именем не распознан — пробую fallback по содержимому');
+      for (const k of headers) {
         if (k === idKey) continue;
         const v = String(rows[0][k] ?? '').trim();
         if (!v) continue;
-        if (/@/.test(v)) continue;              // email
-        if (/^[+\d\s\-()]+$/.test(v)) continue; // телефон / только цифры
-        if (/^\d+$/.test(v)) continue;          // только цифры
-        if (/[\p{L}]/u.test(v)) {
-          nameKey = k;
-          log('Колонка с именем найдена по содержимому: "' + k + '"');
-          break;
-        }
+        if (/@/.test(v)) continue;
+        if (/^[+\d\s\-()]+$/.test(v)) continue;
+        if (/^\d+$/.test(v)) continue;
+        if (/[\p{L}]/u.test(v)) { nameKey = k; log('Fallback выбрал колонку: "' + k + '"'); break; }
       }
     }
 
-    log('Колонки файла: ' + keys.map(k => '"' + k + '"').join(', '));
-    log('Определены — ID: "' + idKey + '"' + (nameKey ? ', Имя: "' + nameKey + '"' : ', Имя: НЕ НАЙДЕНА'));
-
-    if (!idKey) {
-      throw new Error('Не найдена колонка с ID. Убедитесь, что есть колонка "ID Пользователя" или "ID".');
+    if (!idKey) throw new Error('Не найдена колонка с ID (нет "ID Пользователя", "ID" и т.п.).');
+    if (!nameKey) {
+      throw new Error('Не найдена колонка с именем. Заголовки: ' + headers.map(h => '"' + h + '"').join(', ') +
+        '. Коды символов заголовка смотрите в журнале.');
     }
+
+    log('Определены — ID: "' + idKey + '", Имя: "' + nameKey + '"');
 
     for (const r of rows) {
       const id = String(r[idKey] ?? '').trim().replace(/[^0-9-]/g, '');
       if (id) {
         if (!(id in employees)) empOrder.push(id);
-        employees[id] = nameKey ? String(r[nameKey]).trim() : 'Сотрудник';
+        employees[id] = String(r[nameKey] ?? '').trim() || 'Сотрудник';
       }
     }
 
     const n = Object.keys(employees).length;
-    $('#empInfo').textContent = n
-      ? 'Загружено сотрудников: ' + n + (nameKey ? '' : ' ⚠ имена не распознаны — проверьте заголовок колонки')
-      : 'Колонка с ID найдена, но она пуста.';
-    log('Файл сотрудников загружен. Записей: ' + n + (nameKey ? ' с именами' : ' (имён нет!)'));
+    $('#empInfo').textContent = n ? 'Загружено сотрудников: ' + n : 'Колонка с ID найдена, но она пуста.';
+    log('Файл сотрудников загружен. Записей: ' + n);
+    // Показать первые 3 для проверки
+    empOrder.slice(0, 3).forEach(id => log('  ' + id + ' → ' + employees[id]));
   } catch (err) {
     $('#empInfo').textContent = 'Ошибка чтения: ' + err.message;
     log('Ошибка чтения файла сотрудников: ' + err.message);
@@ -353,7 +429,6 @@ $('#run').onclick = async () => {
         if (m.date > toTs) continue;
         if (skipService && m.action) continue;
 
-        // Надежное извлечение ID отправителя
         let senderId = 'Unknown';
         if (m.senderId) {
             senderId = String(m.senderId);
