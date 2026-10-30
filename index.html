@@ -100,7 +100,23 @@ const GRAMJS_URLS = [
   'https://cdn.jsdelivr.net/npm/telegram@2.26.16/+esm',
   'https://cdn.skypack.dev/telegram@2.26.16'
 ];
+// GramJS написан под Node.js: в браузере ему нужны глобальные Buffer, global и process
+async function loadPolyfills() {
+  window.global = window.global || window;
+  window.process = window.process || { env: {}, browser: true, nextTick: (f, ...a) => setTimeout(() => f(...a), 0) };
+  if (window.Buffer) return;
+  const srcs = ['https://esm.sh/buffer@6.0.3', 'https://cdn.jsdelivr.net/npm/buffer@6.0.3/+esm'];
+  for (const u of srcs) {
+    try {
+      const m = await import(u);
+      const B = m.Buffer || (m.default && m.default.Buffer);
+      if (B) { window.Buffer = B; log('Buffer подключён'); return; }
+    } catch (e) { log('  Buffer не загрузился из ' + u + ': ' + (e.message || e)); }
+  }
+  throw new Error('не удалось подключить Buffer');
+}
 async function loadGramJS() {
+  await loadPolyfills();
   let last;
   for (const u of GRAMJS_URLS) {
     try { log('Загрузка GramJS: ' + u); const m = await import(u); if (m.TelegramClient) return m; last = new Error('в модуле нет TelegramClient'); }
