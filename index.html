@@ -20,7 +20,7 @@ section[hidden]{display:none}
 h2{font-size:1.05rem;margin:0 0 14px;display:flex;gap:10px;align-items:baseline}
 h2 b{color:var(--accent)}
 label{display:block;font-size:.9rem;color:var(--mute);margin:12px 0 4px}
-input[type=text],input[type=password],input[type=date],input[type=file]{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+input[type=text],input[type=password],input[type=date],input[type=file],input[type=number],input[type=time]{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
 input:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media(max-width:560px){.row{grid-template-columns:1fr}}
@@ -38,12 +38,34 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .tools button{margin-top:8px;padding:5px 10px;font-size:.85rem}
 #log{margin-top:0;background:var(--code);color:var(--code-ink);font:13px/1.5 ui-monospace,Consolas,monospace;padding:12px;border-radius:6px;height:200px;overflow:auto;white-space:pre-wrap;margin-top:14px}
 #status{margin-top:10px;color:var(--mute);font-size:.9rem;min-height:1.4em}
+#logDl{margin-top:8px;padding:5px 10px;font-size:.85rem}
+
+/* прогресс-бар */
+#progressWrap{margin-top:14px}
+#progressWrap[hidden]{display:none}
+.pHead{display:flex;justify-content:space-between;font-size:.85rem;color:var(--mute);margin-bottom:4px;gap:10px}
+#progressStage{font-weight:600;color:var(--ink)}
+.pBar{height:20px;background:var(--bg);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+#progressFill{height:100%;width:0;background:repeating-linear-gradient(45deg,#1f6f8b 0 12px,#2a85a6 12px 24px);transition:width .25s;position:relative;border-radius:10px}
+#progressFill::after{content:'';position:absolute;inset:0;background:linear-gradient(110deg,transparent 30%,rgba(255,255,255,.5) 50%,transparent 70%);background-size:200% 100%;animation:shine 1.4s linear infinite}
+@keyframes shine{from{background-position:200% 0}to{background-position:-200% 0}}
+#progressText{font-size:.82rem;color:var(--mute);margin-top:4px;min-height:1.2em}
+
+/* папки */
+#folders{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.pill{display:inline-flex;align-items:center;gap:4px;margin:0;padding:4px 10px;font-size:.85rem;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--ink);cursor:pointer}
+.pill.partial{border-color:var(--accent);background:rgba(31,111,139,.15)}
+.pill.all{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.pill .x{margin-left:4px;font-weight:700;opacity:.8}
+#manualFolders{margin-top:12px;border:1px dashed var(--line);border-radius:8px;padding:8px 12px}
+#manualFolders summary{cursor:pointer;color:var(--mute);font-size:.9rem}
+#timeBlock[hidden]{display:none}
 </style>
 </head>
 <body>
 <main>
 <h1>Выгрузка диалогов поддержки из Telegram</h1>
-<p class="lead">Страница входит в ваш аккаунт через GramJS, собирает сообщения из выбранных групп за период и сохраняет Excel с четырьмя листами. Расчётные листы построены на формулах.</p>
+<p class="lead">Страница входит в ваш аккаунт через GramJS, собирает сообщения из выбранных групп за период и сохраняет Excel. Расчётные листы построены на формулах. При выгрузке за один день добавляются листы с FRT.</p>
 
 <section id="s1">
   <h2><b>1</b> Вход в Telegram</h2>
@@ -68,10 +90,19 @@ button:disabled{opacity:.5;cursor:not-allowed}
     <div><label for="dFrom">Начало периода</label><input id="dFrom" type="date"></div>
     <div><label for="dTo">Конец периода</label><input id="dTo" type="date"></div>
   </div>
+  <div id="timeBlock" hidden>
+    <div class="row">
+      <div><label for="timeFrom">Время с</label><input id="timeFrom" type="time" value="09:00"></div>
+      <div><label for="timeTo">Время по</label><input id="timeTo" type="time" value="18:00"></div>
+    </div>
+    <p class="hint">Однодневный режим: FRT считается только по сообщениям в этом интервале. Добавятся листы «Активность и FRT» и «FRT-лог».</p>
+  </div>
   <label for="empFile">Файл сотрудников (CSV или Excel)</label>
   <input id="empFile" type="file" accept=".csv,.txt,.tsv,.xlsx,.xls">
   <p class="hint">Нужны колонки с ID и Именем. Скрипт ищет колонки: «ID Пользователя», «ID», «User ID» и «Имя», «ФИО», «Name».</p>
   <p id="empInfo" class="hint"></p>
+  <label for="slaMinutes">SLA-порог ответа, минут</label>
+  <input id="slaMinutes" type="number" min="1" max="1440" value="5" style="max-width:140px">
   <label for="exclIds">Исключить отправителей (ID через запятую, например рассылки)</label>
   <input id="exclIds" type="text" placeholder="6640038802, 123456789" autocomplete="off">
   <label class="check"><input id="skipService" type="checkbox" checked> Пропускать служебные сообщения (вступления, закрепы и т. п.)</label>
@@ -79,6 +110,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 
 <section id="s3" hidden>
   <h2><b>3</b> Группы и выгрузка</h2>
+  <div id="folders"></div>
   <div class="tools">
     <input id="gFilter" type="text" placeholder="Поиск по названию" style="max-width:260px">
     <button class="ghost" id="gAll">Выбрать все</button>
@@ -86,12 +118,25 @@ button:disabled{opacity:.5;cursor:not-allowed}
     <span id="gCount" class="hint"></span>
   </div>
   <div id="groups"></div>
+  <details id="manualFolders">
+    <summary>🔧 Ручные папки</summary>
+    <label for="mfName">Название папки</label>
+    <input id="mfName" type="text" autocomplete="off" placeholder="Например: Поддержка VIP">
+    <button class="ghost" id="mfSave">Сохранить выбранные группы</button>
+    <p class="hint">Папка запомнит группы, отмеченные сейчас. Удалить — крестик на кнопке-пилюле.</p>
+  </details>
   <button id="run">Выгрузить в Excel</button>
   <button id="stop" class="ghost" hidden>Остановить и сохранить</button>
+  <div id="progressWrap" hidden>
+    <div class="pHead"><span id="progressStage"></span><span id="progressPct">0%</span></div>
+    <div class="pBar"><div id="progressFill"></div></div>
+    <div id="progressText"></div>
+  </div>
   <div id="status"></div>
 </section>
 <div id="log" aria-live="polite">Журнал: здесь появятся сообщения и ошибки.
 </div>
+<button class="ghost" id="logDl">💾 Скачать лог (.txt)</button>
 </main>
 
 <script>
@@ -104,7 +149,34 @@ const lsGet = k => { try { return localStorage.getItem(k) || ''; } catch (e) { r
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
 const lsDel = k => { try { localStorage.removeItem(k); } catch (e) {} };
 
-let client = null, employees = {}, empOrder = [], groups = [], stopFlag = false;
+let client = null, employees = {}, empOrder = [], groups = [], folders = [], stopFlag = false;
+
+// ---------- прогресс-бар ----------
+function setProgress(pct, stage, text) {
+  $('#progressWrap').hidden = false;
+  pct = Math.max(0, Math.min(100, Math.round(pct)));
+  $('#progressFill').style.width = pct + '%';
+  $('#progressPct').textContent = pct + '%';
+  if (stage !== undefined) $('#progressStage').textContent = stage;
+  if (text !== undefined) $('#progressText').textContent = text;
+}
+function resetProgress() {
+  $('#progressWrap').hidden = true;
+  $('#progressFill').style.width = '0';
+  $('#progressPct').textContent = '0%';
+  $('#progressStage').textContent = '';
+  $('#progressText').textContent = '';
+}
+
+// ---------- скачать лог ----------
+$('#logDl').onclick = () => {
+  const blob = new Blob([$('#log').textContent], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'telegram_export_log_' + new Date().toISOString().slice(0, 10) + '.txt';
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+};
 
 // ---------- вспомогательное окно ввода ----------
 function ask(label, secret) {
@@ -181,6 +253,38 @@ const iso = d => d.toISOString().slice(0, 10);
 $('#dTo').value = iso(new Date());
 $('#dFrom').value = iso(new Date(Date.now() - 14 * 864e5));
 
+// ---------- сохранение настроек ----------
+const SETTINGS = [
+  ['dFrom', 'tg_s_dFrom'], ['dTo', 'tg_s_dTo'], ['exclIds', 'tg_s_excl'],
+  ['slaMinutes', 'tg_s_sla'], ['skipService', 'tg_s_skip'],
+  ['timeFrom', 'tg_s_timeFrom'], ['timeTo', 'tg_s_timeTo']
+];
+function loadSettings() {
+  for (const [id, key] of SETTINGS) {
+    const v = lsGet(key);
+    if (v === '') continue;
+    const el = $('#' + id);
+    if (el.type === 'checkbox') el.checked = v === '1'; else el.value = v;
+  }
+}
+function saveSettings() {
+  for (const [id, key] of SETTINGS) {
+    const el = $('#' + id);
+    lsSet(key, el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value);
+  }
+}
+function updateTimeVisibility() {
+  $('#timeBlock').hidden = !($('#dFrom').value && $('#dFrom').value === $('#dTo').value);
+}
+loadSettings();
+for (const [id] of SETTINGS) {
+  $('#' + id).addEventListener('change', saveSettings);
+  if ($('#' + id).type === 'text' || $('#' + id).type === 'number') $('#' + id).addEventListener('input', saveSettings);
+}
+$('#dFrom').addEventListener('change', updateTimeVisibility);
+$('#dTo').addEventListener('change', updateTimeVisibility);
+updateTimeVisibility();
+
 // ============================================================
 // -------- сотрудники (РУЧНОЙ ПАРСЕР CSV + XLSX) ------------
 // ============================================================
@@ -213,7 +317,6 @@ async function readCsvAsText(file) {
 
 // Полноценный CSV-парсер (кавычки, многострочные значения, автоопределение разделителя)
 function parseCsv(text) {
-  // Разбиваем на строки с учётом кавычек
   const lines = [];
   let cur = '', inQ = false;
   for (let i = 0; i < text.length; i++) {
@@ -233,7 +336,6 @@ function parseCsv(text) {
 
   if (!lines.length) return { headers: [], rows: [] };
 
-  // Автоопределение разделителя по первой строке
   const first = lines[0];
   const counts = { ',': 0, ';': 0, '\t': 0 };
   let inQ2 = false;
@@ -305,7 +407,6 @@ $('#empFile').onchange = async e => {
 
     if (!rows.length) { $('#empInfo').textContent = 'Файл пуст.'; return; }
 
-    // Показать заголовки с кодами символов
     log('Заголовки: ' + headers.map(h => '"' + h + '"').join(', '));
     headers.forEach(h => log('  "' + h + '" → ' + hexCodes(h)));
 
@@ -322,7 +423,6 @@ $('#empFile').onchange = async e => {
           || c.includes('сотрудник') || c.includes('employee') || c.includes('fullname');
     });
 
-    // Fallback: если заголовок не распознан — ищем колонку по содержимому первой строки данных
     if (!nameKey) {
       log('Заголовок с именем не распознан — пробую fallback по содержимому');
       for (const k of headers) {
@@ -349,14 +449,14 @@ $('#empFile').onchange = async e => {
       if (id) {
         if (!(id in employees)) empOrder.push(id);
         employees[id] = String(r[nameKey] ?? '').trim() || 'Сотрудник';
+        if (id.length !== 10) log('⚠ Подозрительный ID (' + id.length + ' цифр, ожидается 10): ' + id + ' → ' + employees[id]);
       }
     }
 
     const n = Object.keys(employees).length;
     $('#empInfo').textContent = n ? 'Загружено сотрудников: ' + n : 'Колонка с ID найдена, но она пуста.';
-    log('Файл сотрудников загружен. Записей: ' + n);
-    // Показать первые 3 для проверки
-    empOrder.slice(0, 3).forEach(id => log('  ' + id + ' → ' + employees[id]));
+    log('Загружено сотрудников: ' + n);
+    empOrder.slice(0, 3).forEach(id => log(id + ' → ' + employees[id]));
   } catch (err) {
     $('#empInfo').textContent = 'Ошибка чтения: ' + err.message;
     log('Ошибка чтения файла сотрудников: ' + err.message);
@@ -369,8 +469,101 @@ async function loadGroups() {
   const dialogs = await client.getDialogs({ limit: 1000 });
   groups = dialogs.filter(d => d.isGroup).map(d => ({ id: String(d.id), title: d.title || '(без названия)', entity: d.entity, on: true }));
   log('Найдено групп: ' + groups.length);
+  await loadTelegramFolders();
   renderGroups();
 }
+
+// ---------- папки Telegram ----------
+const idStr = v => (v === undefined || v === null) ? '' : String(v);
+function peerKey(p) {
+  if (!p) return '';
+  if (p.channelId !== undefined) return 'channel:' + idStr(p.channelId);
+  if (p.chatId !== undefined) return 'chat:' + idStr(p.chatId);
+  return '';
+}
+function dialogKey(g) {
+  const e = g.entity;
+  if (!e) return '';
+  if (e.className === 'Channel') return 'channel:' + idStr(e.id);
+  if (e.className === 'Chat') return 'chat:' + idStr(e.id);
+  return '';
+}
+async function loadTelegramFolders() {
+  folders = [];
+  const Api = window.telegram && window.telegram.Api;
+  if (!Api || !Api.messages || !Api.messages.GetDialogFilters) {
+    log('API папок недоступен (старая сборка GramJS) — используйте ручные папки.');
+    return;
+  }
+  try {
+    const res = await client.invoke(new Api.messages.GetDialogFilters({}));
+    const list = Array.isArray(res) ? res : (res.filters || []);
+    log('Получено фильтров Telegram: ' + list.length);
+    for (const f of list) {
+      if (!f || f.className === 'DialogFilterDefault') continue;
+      let title = f.title;
+      if (title && typeof title === 'object') title = title.text;
+      if (!title) continue;
+      const peers = new Set(), excludes = new Set();
+      (f.includePeers || []).forEach(p => { const k = peerKey(p); if (k) peers.add(k); });
+      (f.excludePeers || []).forEach(p => { const k = peerKey(p); if (k) excludes.add(k); });
+      const ids = [];
+      for (const g of groups) {
+        const k = dialogKey(g);
+        if (!k || excludes.has(k)) continue;
+        if (peers.has(k) || f.groups) ids.push(g.id);
+      }
+      if (ids.length) folders.push({ id: 'tg' + f.id, title: String(title), groupIds: ids, manual: false });
+    }
+    log('Telegram-папок с группами: ' + folders.length);
+  } catch (e) {
+    log('Не удалось получить папки Telegram: ' + (e.message || e));
+  }
+}
+function loadManualFolders() {
+  try { const a = JSON.parse(lsGet('manual_folders') || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+}
+function renderFolders() {
+  const box = $('#folders'); box.innerHTML = '';
+  const all = [...folders, ...loadManualFolders().map(f => ({ id: f.id, title: f.title, groupIds: f.groupIds || [], manual: true }))];
+  for (const f of all) {
+    const ids = f.groupIds.filter(id => groups.some(g => g.id === id));
+    const on = ids.filter(id => groups.find(g => g.id === id).on).length;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pill' + (ids.length && on === ids.length ? ' all' : on ? ' partial' : '');
+    b.textContent = (f.manual ? '🔧 ' : '📁 ') + f.title + ' (' + ids.length + ')';
+    b.onclick = () => {
+      const target = !(ids.length && on === ids.length);
+      groups.forEach(g => { if (ids.includes(g.id)) g.on = target; });
+      renderGroups();
+    };
+    if (f.manual) {
+      const x = document.createElement('span');
+      x.className = 'x'; x.textContent = '×'; x.title = 'Удалить папку';
+      x.onclick = ev => {
+        ev.stopPropagation();
+        lsSet('manual_folders', JSON.stringify(loadManualFolders().filter(m => m.id !== f.id)));
+        renderFolders();
+      };
+      b.append(x);
+    }
+    box.append(b);
+  }
+}
+$('#mfSave').onclick = () => {
+  const title = $('#mfName').value.trim();
+  const ids = groups.filter(g => g.on).map(g => g.id);
+  if (!title) { alert('Введите название папки'); return; }
+  if (!ids.length) { alert('Отметьте хотя бы одну группу'); return; }
+  const list = loadManualFolders();
+  list.push({ id: 'm' + Date.now(), title, groupIds: ids });
+  lsSet('manual_folders', JSON.stringify(list));
+  $('#mfName').value = '';
+  log('Ручная папка «' + title + '» сохранена: групп ' + ids.length);
+  renderFolders();
+};
+
 function renderGroups() {
   const q = $('#gFilter').value.toLowerCase();
   const box = $('#groups'); box.innerHTML = '';
@@ -385,7 +578,7 @@ function renderGroups() {
   });
   count();
 }
-const count = () => { $('#gCount').textContent = 'Выбрано: ' + groups.filter(g => g.on).length + ' из ' + groups.length; };
+const count = () => { $('#gCount').textContent = 'Выбрано: ' + groups.filter(g => g.on).length + ' из ' + groups.length; renderFolders(); };
 $('#gFilter').oninput = renderGroups;
 $('#gAll').onclick = () => { const q = $('#gFilter').value.toLowerCase(); groups.forEach(g => { if (!q || g.title.toLowerCase().includes(q)) g.on = true; }); renderGroups(); };
 $('#gNone').onclick = () => { const q = $('#gFilter').value.toLowerCase(); groups.forEach(g => { if (!q || g.title.toLowerCase().includes(q)) g.on = false; }); renderGroups(); };
@@ -401,26 +594,40 @@ const clean = t => String(t || '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u0
 
 $('#stop').onclick = () => { stopFlag = true; };
 
+const CONCURRENCY = 3;
+
 $('#run').onclick = async () => {
   const dFrom = $('#dFrom').value, dTo = $('#dTo').value;
   if (!dFrom || !dTo) { alert('Укажите период'); return; }
   const fromTs = Date.parse(dFrom + 'T00:00:00Z') / 1000 - TZ;
   const toTs = Date.parse(dTo + 'T23:59:59Z') / 1000 - TZ;
   if (fromTs > toTs) { alert('Начало периода позже конца'); return; }
+
+  const isSingleDay = dFrom === dTo;
+  const timeFrom = $('#timeFrom').value || '09:00', timeTo = $('#timeTo').value || '18:00';
+  if (isSingleDay && timeFrom >= timeTo) { alert('Время «с» должно быть раньше времени «по»'); return; }
+  let sla = parseInt($('#slaMinutes').value, 10);
+  if (!sla || sla < 1) sla = 5;
+  if (sla > 1440) sla = 1440;
+
   const excluded = new Set($('#exclIds').value.split(/[,;\s]+/).filter(Boolean));
   const skipService = $('#skipService').checked;
   const selected = groups.filter(g => g.on);
   if (!selected.length) { alert('Выберите хотя бы одну группу'); return; }
+  saveSettings();
 
   stopFlag = false;
   $('#run').disabled = true; $('#stop').hidden = false;
-  const rows = []; let done = 0, withMsgs = 0;
+  resetProgress();
+  setProgress(0, 'Сбор сообщений', 'Групп: 0 из ' + selected.length);
 
-  for (const g of selected) {
-    if (stopFlag) break;
-    done++;
-    log('Группа ' + done + '/' + selected.length + ': ' + g.title);
-    let n = 0;
+  const senderCache = new Map(); // кэш имён клиентов
+  const results = new Array(selected.length);
+  let doneGroups = 0, totalMsgs = 0, idx = 0;
+  const M = selected.length;
+
+  const fetchGroup = async (g, gi) => {
+    const out = []; let n = 0;
     try {
       for await (const m of client.iterMessages(g.entity, { offsetDate: toTs + 1, limit: 1e7 })) {
         if (stopFlag) break;
@@ -430,42 +637,67 @@ $('#run').onclick = async () => {
         if (skipService && m.action) continue;
 
         let senderId = 'Unknown';
-        if (m.senderId) {
-            senderId = String(m.senderId);
-        } else if (m.sender && m.sender.id) {
-            senderId = String(m.sender.id);
-        }
+        if (m.senderId) senderId = String(m.senderId);
+        else if (m.sender && m.sender.id) senderId = String(m.sender.id);
 
         if (excluded.has(senderId)) continue;
         let role, name;
         if (senderId in employees) {
-            role = 'Сотрудник';
-            name = employees[senderId];
+          role = 'Сотрудник'; name = employees[senderId];
         } else {
-            role = 'Клиент'; name = 'Неизвестно';
+          role = 'Клиент';
+          if (senderCache.has(senderId)) name = senderCache.get(senderId);
+          else {
+            name = 'Неизвестно';
             const s = m.sender;
             if (s) { if (s.firstName) name = s.firstName + (s.lastName ? ' ' + s.lastName : ''); else if (s.title) name = s.title; }
+            if (name !== 'Неизвестно') senderCache.set(senderId, name);
+          }
         }
         const t = new Date((m.date + TZ) * 1000).toISOString();
-        rows.push({
+        out.push({
           'Дата': t.slice(0, 10), 'Время': t.slice(11, 19),
           'ID группы': g.id, 'Название группы': g.title,
           'ID отправителя': senderId, 'Имя отправителя': name, 'Роль': role,
           'Тип сообщения': msgType(m),
-          'Текст сообщения': clean((() => { try { return m.text; } catch (e) { return m.message; } })() || m.message)
+          'Текст сообщения': clean((() => { try { return m.text; } catch (e) { return m.message; } })() || m.message),
+          _ts: m.date
         });
-        n++;
-        if (n % 200 === 0) $('#status').textContent = g.title + ': ' + n + ' сообщений…';
+        n++; totalMsgs++;
+        if (n % 50 === 0) {
+          setProgress(doneGroups / M * 100, 'Сбор сообщений', 'Групп: ' + doneGroups + ' из ' + M + ' · сообщений: ' + totalMsgs);
+          $('#status').textContent = g.title + ': ' + n + ' сообщений…';
+        }
       }
-    } catch (e) { log('  ошибка в группе: ' + (e.message || e)); }
-    if (n) { withMsgs++; log('  найдено сообщений: ' + n); }
-  }
+    } catch (e) { log('  ошибка в группе "' + g.title + '": ' + (e.message || e)); }
+    results[gi] = out;
+    doneGroups++;
+    log('[' + (gi + 1) + '/' + M + '] "' + g.title + '" — ' + n + ' сообщений');
+    setProgress(doneGroups / M * 100, 'Сбор сообщений', 'Групп: ' + doneGroups + ' из ' + M + ' · сообщений: ' + totalMsgs);
+  };
+
+  const worker = async () => {
+    while (!stopFlag) {
+      const i = idx++;
+      if (i >= M) break;
+      await fetchGroup(selected[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, M) }, worker));
 
   $('#stop').hidden = true; $('#run').disabled = false;
-  if (!rows.length) { $('#status').textContent = 'За выбранный период сообщений не найдено.'; return; }
+  const rows = [];
+  let withMsgs = 0;
+  for (const r of results) if (r && r.length) { withMsgs++; for (const x of r) rows.push(x); }
+  if (!rows.length) { $('#status').textContent = 'За выбранный период сообщений не найдено.'; resetProgress(); return; }
+
+  // параллельный сбор перемешивает порядок — сортируем (НЕ УБИРАТЬ)
+  rows.sort((a, b) => (a['Дата'] + ' ' + a['Время']).localeCompare(b['Дата'] + ' ' + b['Время']));
 
   try {
-    await saveWorkbook(rows, dFrom, dTo);
+    setProgress(95, 'Формирование Excel', 'Сообщений: ' + rows.length);
+    await saveWorkbook(rows, dFrom, dTo, isSingleDay, timeFrom, timeTo, sla);
+    setProgress(100, 'Готово', 'Файл support_analytics.xlsx сохранён');
     $('#status').textContent = 'Готово: ' + rows.length + ' сообщений из ' + withMsgs + ' групп. Файл support_analytics.xlsx сохранён.';
   } catch (e) {
     $('#status').textContent = 'Ошибка при создании Excel: ' + (e.message || e);
@@ -475,13 +707,69 @@ $('#run').onclick = async () => {
   log('Готово. Групп с сообщениями: ' + withMsgs + ' из ' + selected.length + ', всего сообщений: ' + rows.length);
 };
 
-// ---------- Excel в формате образца ----------
+// ---------- Excel ----------
 const colL = n => { let t = ''; while (n > 0) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = Math.floor((n - 1) / 26); } return t; };
 const sumA = a => a.reduce((x, y) => x + y, 0);
 const avgA = a => a.length ? sumA(a) / a.length : 0;
 const medA = a => { if (!a.length) return 0; const b = [...a].sort((x, y) => x - y), h = b.length >> 1; return b.length % 2 ? b[h] : (b[h - 1] + b[h]) / 2; };
+const r1 = x => Math.round(x * 10) / 10;
 
-async function saveWorkbook(rows, dFrom, dTo) {
+// FRT: циклы «клиент написал → сотрудник ответил», по каждой группе отдельно
+function calculateFRT(rows, sla, timeFrom, timeTo) {
+  const tFrom = timeFrom + ':00', tTo = timeTo + ':59';
+  const byGroup = {};
+  for (const r of rows) {
+    if (r['Время'] < tFrom || r['Время'] > tTo) continue;
+    (byGroup[r['ID группы']] ||= []).push(r);
+  }
+  const incidents = [], reopens = {};
+  const cut = s => String(s || '').replace(/\s+/g, ' ').slice(0, 500);
+  for (const gid of Object.keys(byGroup)) {
+    const list = byGroup[gid].sort((a, b) => a._ts - b._ts);
+    let open = null, lastEmp = null, lastEmpTs = 0; // сброс на границе чата
+    for (const r of list) {
+      if (r['Роль'] === 'Клиент') {
+        if (!open) {
+          if (lastEmp && r._ts - lastEmpTs <= 3600) reopens[lastEmp] = (reopens[lastEmp] || 0) + 1;
+          lastEmp = null;
+          open = r;
+        } // продолжение сообщений клиента в цикле игнорируем
+      } else if (r['Роль'] === 'Сотрудник') {
+        if (open) {
+          incidents.push({
+            empId: r['ID отправителя'], frt: (r._ts - open._ts) / 60,
+            group: r['Название группы'], client: open['Имя отправителя'],
+            reqText: cut(open['Текст сообщения']), respText: cut(r['Текст сообщения']),
+            respDate: r['Дата'], respTime: r['Время'], respTs: r._ts
+          });
+          open = null;
+        }
+        lastEmp = r['ID отправителя']; lastEmpTs = r._ts;
+      }
+    }
+  }
+  const t3 = Math.min(3 * sla, 60);
+  const stats = {};
+  for (const inc of incidents) (stats[inc.empId] ||= { frts: [] }).frts.push(inc.frt);
+  const bucket = (f) => ({
+    fast: f.filter(x => x < sla).length,
+    mid: f.filter(x => x >= sla && x < t3).length,
+    slow: f.filter(x => x >= t3 && x <= 60).length,
+    over: f.filter(x => x > 60).length
+  });
+  for (const id of Object.keys(stats)) {
+    const f = stats[id].frts;
+    Object.assign(stats[id], { n: f.length, avg: avgA(f), med: medA(f), min: Math.min(...f), max: Math.max(...f) }, bucket(f));
+  }
+  const all = incidents.map(i => i.frt);
+  const totalReopens = sumA(Object.values(reopens));
+  const summary = { n: all.length, avg: avgA(all), med: medA(all), min: all.length ? Math.min(...all) : 0, max: all.length ? Math.max(...all) : 0, reopens: totalReopens, ...bucket(all) };
+  log('FRT (SLA=' + sla + 'м, ' + timeFrom + '–' + timeTo + '): ' + summary.n + ' инцидентов · средний ' + r1(summary.avg) +
+      ' мин · медианный ' + r1(summary.med) + ' мин · < SLA ' + (summary.n ? Math.round(summary.fast / summary.n * 100) : 0) + '% · переоткрытий ' + totalReopens + '.');
+  return { incidents, stats, reopens, summary, t3 };
+}
+
+async function saveWorkbook(rows, dFrom, dTo, isSingleDay, timeFrom, timeTo, sla) {
   const LOG = "'Детальный лог'", N = rows.length + 1;
   const wb = new ExcelJS.Workbook();
   const thin = { style: 'thin', color: { argb: 'FFBFBFBF' } };
@@ -594,6 +882,72 @@ async function saveWorkbook(rows, dFrom, dTo) {
     wsd.getCell(r, 4).value = { formula: `COUNTIFS(${LOG}!$A:$A, A${r}, ${LOG}!$G:$G, B${r}, ${LOG}!$H:$H, C${r})`, result: cnt[k] };
   });
   wsd.getColumn(1).width = 10.3; wsd.getColumn(2).width = 10.4; wsd.getColumn(3).width = 14.7;
+
+  // ---- однодневный режим: FRT ----
+  if (isSingleDay) {
+    const F = calculateFRT(rows, sla, timeFrom, timeTo);
+    const t3 = F.t3;
+    const wa = wb.addWorksheet('Активность и FRT', { views: [{ state: 'frozen', xSplit: 2, ySplit: 3 }] });
+    put(wa, 1, 1, 'Активность и скорость первого ответа (FRT) за ' + dFrom + ', ' + timeFrom + '–' + timeTo + ', SLA = ' + sla + ' мин', null, c => { c.font = { name: 'Cambria', size: 13, bold: true }; });
+    wa.getRow(3).height = 45;
+    const h = ['ID', 'Сотрудник', 'Обработано', 'Средний FRT, мин', 'Медианный FRT, мин', 'Мин, мин', 'Макс, мин',
+      'Быстрых (< ' + sla + ' мин)', 'Доля < SLA, %', sla + '–' + t3 + ' мин', t3 + '–60 мин', '> 60 мин', 'Переоткрытий'];
+    h.forEach((t, i) => put(wa, 3, i + 1, t, null, HEAD));
+    const share = (a, b) => b ? a / b * 100 : 0;
+    const shareFmt = c => {
+      const v = c.value;
+      const col = v >= 70 ? 'FFC6EFCE' : v >= 40 ? 'FFFFEB9C' : 'FFFFC7CE';
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: col } };
+    };
+    const faEmps = empOrder.filter(id => agg[id] || F.stats[id]);
+    let r = 4;
+    for (const id of faEmps) {
+      const s = F.stats[id] || { n: 0, avg: 0, med: 0, min: 0, max: 0, fast: 0, mid: 0, slow: 0, over: 0 };
+      put(wa, r, 1, id, null, body); put(wa, r, 2, employees[id], null, body);
+      put(wa, r, 3, s.n, '0', body);
+      put(wa, r, 4, r1(s.avg), '0.0', body); put(wa, r, 5, r1(s.med), '0.0', body);
+      put(wa, r, 6, r1(s.min), '0.0', body); put(wa, r, 7, r1(s.max), '0.0', body);
+      put(wa, r, 8, s.fast, '0', body);
+      put(wa, r, 9, r1(share(s.fast, s.n)), '0.0', c => { body(c); if (s.n) shareFmt(c); });
+      put(wa, r, 10, s.mid, '0', body); put(wa, r, 11, s.slow, '0', body); put(wa, r, 12, s.over, '0', body);
+      put(wa, r, 13, F.reopens[id] || 0, '0', body);
+      r++;
+    }
+    const S = F.summary;
+    for (let c = 1; c <= 13; c++) put(wa, r, c, null, null, TOTAL);
+    put(wa, r, 2, 'ИТОГО / СРЕДНЕЕ', null, TOTAL);
+    const tv = [S.n, r1(S.avg), r1(S.med), r1(S.min), r1(S.max), S.fast, r1(share(S.fast, S.n)), S.mid, S.slow, S.over, S.reopens];
+    tv.forEach((v, i) => put(wa, r, 3 + i, v, i === 0 || i >= 5 && i !== 6 ? '0' : '0.0', TOTAL));
+    if (S.n) shareFmt(wa.getCell(r, 9));
+    const notes = [
+      'Методика FRT: по каждой группе отдельно, по времени. Цикл открывается, когда клиент пишет первым; закрывается первым ответом сотрудника. FRT = время ответа − время первого сообщения клиента.',
+      'Дополнительные сообщения клиента внутри открытого цикла не сбрасывают отсчёт. На границе групп цикл сбрасывается.',
+      'Переоткрытие: клиент снова пишет в течение 60 минут после ответа сотрудника — предыдущему сотруднику +1.',
+      'Учитываются сообщения только в интервале ' + timeFrom + '–' + timeTo + '. Категории: < ' + sla + ', ' + sla + '–' + t3 + ', ' + t3 + '–60, > 60 минут.',
+      'Цвет доли < SLA: ≥ 70% зелёный, 40–70% жёлтый, < 40% красный.',
+      'Ограничение: в групповом чате с параллельными клиентами первый ответ сотрудника закрывает цикл целиком (упрощение).'
+    ];
+    notes.forEach((t, i) => put(wa, r + 2 + i, 1, t));
+    wa.getColumn(1).width = 14; wa.getColumn(2).width = 40;
+    for (let c = 3; c <= 13; c++) wa.getColumn(c).width = 13;
+
+    const wf = wb.addWorksheet('FRT-лог', { views: [{ state: 'frozen', ySplit: 1 }] });
+    const fh = ['Время', 'Группа', 'Клиент', 'Сотрудник', 'FRT (мин)', 'Текст запроса', 'Текст ответа'];
+    fh.forEach((t, i) => put(wf, 1, i + 1, t, null, HEAD));
+    const sorted = [...F.incidents].sort((a, b) => a.respTs - b.respTs);
+    sorted.forEach((inc, i) => {
+      const rr = i + 2;
+      wf.getCell(rr, 1).value = inc.respDate + ' ' + inc.respTime;
+      wf.getCell(rr, 2).value = inc.group;
+      wf.getCell(rr, 3).value = inc.client;
+      wf.getCell(rr, 4).value = employees[inc.empId] || inc.empId;
+      wf.getCell(rr, 5).value = r1(inc.frt); wf.getCell(rr, 5).numFmt = '0.0';
+      wf.getCell(rr, 6).value = inc.reqText;
+      wf.getCell(rr, 7).value = inc.respText;
+    });
+    if (sorted.length) wf.autoFilter = { from: 'A1', to: 'G' + (sorted.length + 1) };
+    [19, 24, 20, 26, 10, 50, 50].forEach((w, i) => wf.getColumn(i + 1).width = w);
+  }
 
   const buf = await wb.xlsx.writeBuffer();
   const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
